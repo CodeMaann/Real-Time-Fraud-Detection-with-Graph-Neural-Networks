@@ -10,11 +10,10 @@ from __future__ import annotations
 
 import argparse
 import os
-from pathlib import Path
 import sys
 import tempfile
 import time
-from typing import Any
+from pathlib import Path
 
 # Configure MLflow environment before imports
 os.environ["MLFLOW_ALLOW_FILE_STORE"] = "true"
@@ -87,7 +86,7 @@ class XGBoostBaseline:
             early_stopping_rounds=cfg_m.early_stopping_rounds,
             eval_metric="aucpr",  # Primary metric: Area under PR Curve
             random_state=cfg_m.random_state,
-            tree_method="hist",   # Fast CPU histogram method
+            tree_method="hist",  # Fast CPU histogram method
             n_jobs=-1,
         )
 
@@ -257,7 +256,9 @@ def train_and_evaluate_baseline(
         if baseline.model and hasattr(baseline.model, "best_iteration"):
             mlflow.log_metric("best_iteration", baseline.model.best_iteration)
 
-        print(f"      Trained in {train_elapsed:.2f}s (scale_pos_weight={baseline.scale_pos_weight:.2f})")
+        print(
+            f"      Trained in {train_elapsed:.2f}s (scale_pos_weight={baseline.scale_pos_weight:.2f})"
+        )
 
         # Predictions
         print("[5/5] Evaluating test set and generating diagnostic plots...")
@@ -336,17 +337,27 @@ def train_and_evaluate_baseline(
     print(f"Validation PR-AUC (Primary) : {val_metrics.pr_auc:.4f}")
     print(f"Validation ROC-AUC          : {val_metrics.roc_auc:.4f}")
     print(f"Validation Recall @ 1% FPR  : {val_metrics.recall_at_1pct_fpr:.4f}")
-    print(f"Validation Best F1          : {val_metrics.f1:.4f} (Thresh: {val_metrics.best_threshold:.2f})")
+    print(
+        f"Validation Best F1          : {val_metrics.f1:.4f} (Thresh: {val_metrics.best_threshold:.2f})"
+    )
     print("-" * 70)
     print(f"TEST PR-AUC (Primary)       : {test_metrics.pr_auc:.4f}")
     print(f"TEST ROC-AUC                : {test_metrics.roc_auc:.4f}")
     print(f"TEST Recall @ 1% FPR        : {test_metrics.recall_at_1pct_fpr:.4f}")
-    print(f"TEST Best F1                : {test_metrics.f1:.4f} (Thresh: {test_metrics.best_threshold:.2f})")
-    print(f"TEST Confusion Matrix       : TN={test_metrics.tn:,}, FP={test_metrics.fp:,}, FN={test_metrics.fn:,}, TP={test_metrics.tp:,}")
+    print(
+        f"TEST Best F1                : {test_metrics.f1:.4f} (Thresh: {test_metrics.best_threshold:.2f})"
+    )
+    print(
+        f"TEST Confusion Matrix       : TN={test_metrics.tn:,}, FP={test_metrics.fp:,}, FN={test_metrics.fn:,}, TP={test_metrics.tp:,}"
+    )
     print(f"TEST Business Cost (Best F1): ${test_metrics.total_cost:,.2f}")
-    print(f"TEST Minimum Business Cost  : ${test_metrics.min_cost:,.2f} (at Thresh: {test_metrics.min_cost_threshold:.2f})")
+    print(
+        f"TEST Minimum Business Cost  : ${test_metrics.min_cost:,.2f} (at Thresh: {test_metrics.min_cost_threshold:.2f})"
+    )
     print(f"Model saved to              : {config.model.model_save_path}")
-    print(f"MLflow Run Logged to        : {config.mlflow_tracking_uri} ({config.mlflow_experiment_name})")
+    print(
+        f"MLflow Run Logged to        : {config.mlflow_tracking_uri} ({config.mlflow_experiment_name})"
+    )
     print("=" * 70 + "\n")
 
     return baseline, val_metrics, test_metrics

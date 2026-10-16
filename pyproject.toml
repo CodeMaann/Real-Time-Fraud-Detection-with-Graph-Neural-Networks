@@ -45,7 +45,7 @@ serve = [
 dev = [
     "pytest>=7.4",
     "pytest-cov>=4.1",
-    "ruff>=0.1",
+        "ruff==0.17.0",
     "mypy>=1.7",
     "pre-commit>=3.5",
     "types-PyYAML>=6.0",
@@ -81,6 +81,8 @@ ignore = [
     "E501",   # line too long (handled by formatter)
     "B008",   # do not perform function calls in argument defaults (FastAPI)
     "TC",     # flake8-type-checking (causes issues with runtime Pydantic models)
+    "N803",   # uppercase X for feature matrices is standard ML convention
+    "N806",   # same, for local variables like X_train
 ]
 
 [tool.ruff.lint.isort]

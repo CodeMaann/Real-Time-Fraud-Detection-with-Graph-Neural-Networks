@@ -38,7 +38,7 @@ data/processed/
 !configs/*.yaml
 
 # ── Models / Experiments ──────────────────────────────────────────────
-models/
+/models/
 mlruns/
 mlflow.db
 

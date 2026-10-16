@@ -1,0 +1,19 @@
+# ── Heterogeneous Graph Construction Configuration ───────────────────
+# Converts raw transaction parquet into PyG HeteroData with temporal split masks.
+
+data_path: data/raw/transactions.parquet
+processed_dir: data/processed
+num_hops: 2
+max_neighbors_per_hop: 10
+
+split:
+  train_ratio: 0.60
+  val_ratio: 0.20
+  test_ratio: 0.20
+
+node_types:
+  - user
+  - card
+  - merchant
+  - device
+  - ip

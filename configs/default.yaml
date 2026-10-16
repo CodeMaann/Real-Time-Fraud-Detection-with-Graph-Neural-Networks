@@ -1,0 +1,63 @@
+# ── Default configuration for FraudGNN ────────────────────────────────
+# Override any key via a separate YAML file or environment variables.
+
+project_name: fraud-gnn
+
+data:
+  raw_dir: data/raw
+  processed_dir: data/processed
+  output_filename: transactions.parquet
+  num_transactions: 500000
+  num_days: 90
+  start_date: "2024-01-01"
+  num_users: 10000
+  num_merchants: 1000
+  num_devices: 15000
+  num_ips: 25000
+  fraud_ratio: 0.008
+  seed: 42
+
+graph:
+  num_hops: 2
+  max_neighbors_per_hop: 10
+  node_types:
+    - user
+    - card
+    - merchant
+    - device
+    - ip
+
+model:
+  model_type: graphsage        # graphsage | hetero_gat | xgboost
+  hidden_dim: 128
+  num_layers: 2
+  dropout: 0.3
+  heads: 4                     # used by hetero_gat only
+
+training:
+  epochs: 100
+  batch_size: 512
+  learning_rate: 0.001
+  weight_decay: 0.00001
+  patience: 10
+  seed: 42
+  mlflow_tracking_uri: sqlite:///mlflow.db
+  mlflow_experiment_name: fraud-gnn
+
+serving:
+  host: "0.0.0.0"
+  port: 8000
+  model_path: models/best_model.pt
+  fallback_model_path: models/xgboost_baseline.json
+  redis_url: redis://localhost:6379
+
+streaming:
+  bootstrap_servers: localhost:9092
+  input_topic: transactions
+  output_topic: scored_transactions
+  consumer_group: fraud-detector
+
+monitoring:
+  prometheus_port: 9090
+  drift_window_size: 1000
+  drift_threshold: 0.05

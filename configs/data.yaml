@@ -1,0 +1,76 @@
+# ── Data Generation Configuration for FraudGNN ────────────────────────
+# Generates realistic synthetic transaction streams with GNN-amenable graph structures
+# and injected financial fraud typologies.
+
+raw_dir: data/raw
+processed_dir: data/processed
+output_filename: transactions.parquet
+
+# Scale: 500,000 transactions over 90 days across 10,000 users
+num_transactions: 500000
+num_days: 90
+start_date: "2024-01-01"
+num_users: 10000
+num_merchants: 1000
+num_devices: 15000
+num_ips: 25000
+
+# Target fraud rate: 0.8% (~4,000 fraud transactions in 500k)
+fraud_ratio: 0.008
+seed: 42
+
+# Fraud typology distribution weights (sum to 1.0)
+fraud_ring_weight: 0.25           # Coordinated accounts sharing devices/IPs/merchants
+mule_weight: 0.20                 # Rapid inbound-outbound forwarding
+card_testing_weight: 0.20         # Bursts of micro-charges followed by large purchase
+account_takeover_weight: 0.20     # Sudden country/device anomaly + high amount spike
+merchant_collusion_weight: 0.15   # High chargeback rate merchant cluster
+
+# Pattern hyper-parameters
+ring_size_min: 5
+ring_size_max: 30
+mule_burst_min: 2
+mule_burst_max: 5
+card_testing_burst_min: 3
+card_testing_burst_max: 6
+card_testing_small_min: 0.50
+card_testing_small_max: 3.00
+card_testing_large_min: 800.00
+card_testing_large_max: 3000.00
+ato_amount_multiplier: 4.5
+collusion_fraud_rate: 0.65
+
+# Legitimate graph noise (prevents trivial graph edge separation)
+legit_shared_device_prob: 0.08    # Legitimate family/office device sharing
+legit_shared_ip_prob: 0.15        # Public Wi-Fi / corporate VPN sharing
+
+# Spending distribution (log-normal parameters for benign transactions)
+base_amount_loc: 3.5              # Median baseline spending ~ $33
+base_amount_scale: 0.9
+
+# Circadian hourly probability distribution (24 hours, midnight to 23:00)
+hourly_weights:
+  - 0.015   # 00:00
+  - 0.010   # 01:00
+  - 0.007   # 02:00
+  - 0.005   # 03:00 (nadir)
+  - 0.006   # 04:00
+  - 0.012   # 05:00
+  - 0.025   # 06:00
+  - 0.040   # 07:00
+  - 0.055   # 08:00
+  - 0.060   # 09:00
+  - 0.065   # 10:00
+  - 0.065   # 11:00
+  - 0.065   # 12:00 (lunch)
+  - 0.060   # 13:00
+  - 0.060   # 14:00
+  - 0.060   # 15:00
+  - 0.065   # 16:00
+  - 0.070   # 17:00
+  - 0.075   # 18:00
+  - 0.075   # 19:00 (peak)
+  - 0.065   # 20:00
+  - 0.055   # 21:00
+  - 0.045   # 22:00
+  - 0.028   # 23:00

@@ -1,0 +1,27 @@
+# ── Baseline XGBoost Configuration for FraudGNN ────────────────────────
+# Configuration for temporal feature engineering and gradient-boosted tree baseline.
+
+data_path: data/raw/transactions.parquet
+
+split:
+  train_ratio: 0.60
+  val_ratio: 0.20
+  test_ratio: 0.20
+
+model:
+  n_estimators: 300
+  max_depth: 6
+  learning_rate: 0.05
+  subsample: 0.8
+  colsample_bytree: 0.8
+  early_stopping_rounds: 30
+  random_state: 42
+  model_save_path: models/xgboost_baseline.json
+
+cost:
+  review_cost: 10.0            # Manual alert review cost per transaction ($ USD)
+  default_fraud_amount: 500.0  # Average loss if fraud transaction goes undetected ($ USD)
+
+smoothing_alpha: 10.0          # Empirical Bayes smoothing for past merchant risk
+mlflow_tracking_uri: sqlite:///mlflow.db
+mlflow_experiment_name: fraud-gnn-baseline

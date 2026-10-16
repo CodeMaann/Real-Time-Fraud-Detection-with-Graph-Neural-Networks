@@ -1,0 +1,50 @@
+# ── Python ────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ── Virtual environments ─────────────────────────────────────────────
+.venv/
+venv/
+ENV/
+
+# ── IDE / Editor ──────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# ── Testing / Linting ────────────────────────────────────────────────
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# ── Data (generated, large files) ────────────────────────────────────
+data/raw/
+data/processed/
+*.parquet
+*.csv
+!configs/*.yaml
+
+# ── Models / Experiments ──────────────────────────────────────────────
+models/
+mlruns/
+mlflow.db
+
+# ── Docker ────────────────────────────────────────────────────────────
+*.log
+
+# ── OS ────────────────────────────────────────────────────────────────
+Thumbs.db
+Desktop.ini

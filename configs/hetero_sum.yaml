@@ -1,0 +1,41 @@
+# ── HeteroGAT (Sum / Degree Variant) Configuration ───────────────────────────
+# Inductive edge classifier using HeteroConv (SAGEConv with sum aggregation),
+# causal per-node degree features, and edge feature decoder.
+
+data_dir: data/processed
+raw_data_path: data/raw/transactions.parquet
+
+model:
+  model_type: hetero_gat
+  conv_type: pna
+  hidden_dim: 64
+  num_layers: 2
+  heads: 4
+  dropout: 0.2
+  use_edge_attr: true
+  edge_dim: 27
+
+training:
+  epochs: 60
+  batch_size: 2048
+  learning_rate: 0.001
+  weight_decay: 0.00001
+  patience: 8
+  seed: 42
+  gradient_clip_val: 1.0
+  lr_scheduler_factor: 0.5
+  lr_scheduler_patience: 2
+  loss_type: weighted_bce
+  focal_gamma: 2.0
+  focal_alpha: 0.75
+  pos_weight: null
+  num_neighbors:
+    - 10
+    - 10
+  model_save_path: models/best_hetero_sum.pt
+  mlflow_tracking_uri: sqlite:///mlflow.db
+  mlflow_experiment_name: fraud-gnn-hetero-gat
+
+cost:
+  review_cost: 10.0
+  default_fraud_amount: 500.0

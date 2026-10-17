@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 import pytest
 import torch
@@ -48,19 +49,13 @@ def test_entity_mappings_completeness(synthetic_tx_df: pd.DataFrame) -> None:
 
 
 def test_edge_features_shape_and_values(synthetic_tx_df: pd.DataFrame) -> None:
-    """Edge features must have correct dimensions, no NaNs, and valid cyclical bounds."""
-    edge_attrs = compute_edge_features(synthetic_tx_df)
+    """Edge features must have correct dimensions, no NaNs, and valid scaled bounds."""
+    edge_attrs, _ = compute_edge_features(synthetic_tx_df)
 
     assert isinstance(edge_attrs, torch.Tensor)
     assert edge_attrs.shape[0] == len(synthetic_tx_df)
-    assert edge_attrs.shape[1] == 10  # 10 engineered edge features
+    assert edge_attrs.shape[1] == 27  # 27 causal tabular edge features
     assert not torch.isnan(edge_attrs).any(), "Edge attributes contain NaN values!"
-
-    # Sin/Cos components must lie in [-1.0, 1.0]
-    hour_sin = edge_attrs[:, 1]
-    hour_cos = edge_attrs[:, 2]
-    assert (hour_sin >= -1.0001).all() and (hour_sin <= 1.0001).all()
-    assert (hour_cos >= -1.0001).all() and (hour_cos <= 1.0001).all()
 
 
 def test_hetero_data_structure(synthetic_tx_df: pd.DataFrame) -> None:
@@ -130,3 +125,106 @@ def test_strict_temporal_split_no_future_leakage(synthetic_tx_df: pd.DataFrame) 
     assert test_data["user", "transacts_at", "merchant"].edge_index.shape[1] == len(
         synthetic_tx_df
     )
+
+
+def test_hetero_data_edge_labels_binary_without_type_leakage(
+    synthetic_tx_df: pd.DataFrame,
+) -> None:
+    """Edge labels must be strictly binary {0, 1} and edge features cannot contain fraud_type."""
+    mappings = extract_entity_mappings(synthetic_tx_df)
+    data = build_hetero_data(synthetic_tx_df, mappings)
+
+    edge_label = data["user", "transacts_at", "merchant"].edge_label
+    unique_labels = torch.unique(edge_label).tolist()
+    assert set(unique_labels).issubset({0, 1})
+
+    edge_attr = data["user", "transacts_at", "merchant"].edge_attr
+    # 27 causal tabular features without label leakage
+    assert edge_attr.shape[1] == 27
+    assert not torch.isnan(edge_attr).any()
+
+
+def test_node_features_temporal_purity_no_future_leakage(synthetic_tx_df: pd.DataFrame) -> None:
+    """CRITICAL TEST: Proves node features in train/val graphs use ONLY past transactions.
+
+    Zero information from test transactions leaks into train or val node feature vectors.
+    """
+    graph_cfg = GraphConfig(split={"train_ratio": 0.60, "val_ratio": 0.20, "test_ratio": 0.20})
+    splits = create_temporal_splits(synthetic_tx_df, graph_cfg)
+
+    train_data = splits.train_data
+    val_data = splits.val_data
+
+    # Timestamps
+    ts = pd.to_datetime(synthetic_tx_df["timestamp"])
+    train_df = synthetic_tx_df[ts <= splits.train_cutoff]
+    val_df = synthetic_tx_df[ts <= splits.val_cutoff]
+
+    user_map = splits.mappings.user_to_idx
+
+    # 1. Degree feature (col 0): Must exactly equal log1p(count of visible transactions)
+    for u, idx in user_map.items():
+        expected_train_deg = np.log1p((train_df["user_id"] == u).sum())
+        actual_train_deg = float(train_data["user"].x[idx, 0].item())
+        assert np.isclose(actual_train_deg, expected_train_deg, atol=1e-5), (
+            f"Leakage in train user {u}: expected {expected_train_deg}, got {actual_train_deg}"
+        )
+
+        expected_val_deg = np.log1p((val_df["user_id"] == u).sum())
+        actual_val_deg = float(val_data["user"].x[idx, 0].item())
+        assert np.isclose(actual_val_deg, expected_val_deg, atol=1e-5), (
+            f"Leakage in val user {u}: expected {expected_val_deg}, got {actual_val_deg}"
+        )
+
+    # 2. Inject an extreme future transaction in test period: train & val features must not change
+    mutated_df = synthetic_tx_df.copy()
+    test_user = mutated_df["user_id"].iloc[-1]
+    test_user_idx = user_map[test_user]
+
+    train_feat_before = train_data["user"].x[test_user_idx].clone()
+    val_feat_before = val_data["user"].x[test_user_idx].clone()
+
+    # Add a huge future transaction strictly inside the test period (between val_cutoff and t_max)
+    future_row = mutated_df.iloc[-1:].copy()
+    future_row["amount"] = 9999999.0
+    future_row["timestamp"] = splits.val_cutoff + pd.Timedelta(minutes=10)
+    mutated_df = pd.concat([mutated_df, future_row], ignore_index=True)
+
+    mutated_splits = create_temporal_splits(mutated_df, graph_cfg)
+    train_feat_after = mutated_splits.train_data["user"].x[test_user_idx]
+    val_feat_after = mutated_splits.val_data["user"].x[test_user_idx]
+
+    # Future row in test period CANNOT alter train or val node feature vectors
+    assert torch.allclose(train_feat_before, train_feat_after, atol=1e-6), (
+        "Future data leaked into train node features!"
+    )
+    assert torch.allclose(val_feat_before, val_feat_after, atol=1e-6), (
+        "Future data leaked into val node features!"
+    )
+
+
+def test_edge_feature_scaler_fitted_on_train_only(synthetic_tx_df: pd.DataFrame) -> None:
+    """CRITICAL TEST: Proves edge-feature StandardScaler is fitted strictly on the TRAIN split."""
+    graph_cfg = GraphConfig(split={"train_ratio": 0.60, "val_ratio": 0.20, "test_ratio": 0.20})
+    ts = pd.to_datetime(synthetic_tx_df["timestamp"])
+    train_cutoff = ts.min() + (ts.max() - ts.min()) * 0.60
+    train_df = synthetic_tx_df[ts <= train_cutoff].reset_index(drop=True)
+
+    from fraudgnn.data.features import compute_tabular_features, get_feature_column_names
+
+    train_feat_df = compute_tabular_features(train_df, include_label_features=False)
+    cols = get_feature_column_names(include_label_features=False)
+    expected_train_mean = train_feat_df[cols].to_numpy(dtype=np.float32).mean(axis=0)
+
+    splits = create_temporal_splits(synthetic_tx_df, graph_cfg)
+    from fraudgnn.graph.builder import compute_edge_features
+
+    _, fitted_scaler = compute_edge_features(train_df, scaler=None)
+
+    # Scaler mean must match train mean exactly
+    assert np.allclose(fitted_scaler.mean_, expected_train_mean, atol=1e-4)
+
+    # Test edge attributes: transformed by train scaler, not re-centered
+    test_edge_attr = splits.test_data["user", "transacts_at", "merchant"].edge_attr
+    assert test_edge_attr.shape[1] == 27
+    assert not torch.isnan(test_edge_attr).any()

@@ -14,6 +14,11 @@ if TYPE_CHECKING:
         extract_entity_mappings,
         save_graph_splits,
     )
+    from fraudgnn.graph.loader import (
+        FastAdjacency,
+        HomogeneousLinkLoader,
+        LinkNeighborLoader,
+    )
 
 
 def __getattr__(name: str) -> Any:
@@ -29,11 +34,22 @@ def __getattr__(name: str) -> Any:
         from fraudgnn.graph import builder
 
         return getattr(builder, name)
+    elif name in (
+        "FastAdjacency",
+        "HomogeneousLinkLoader",
+        "LinkNeighborLoader",
+    ):
+        from fraudgnn.graph import loader
+
+        return getattr(loader, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 __all__ = [
     "EntityMappings",
+    "FastAdjacency",
+    "HomogeneousLinkLoader",
+    "LinkNeighborLoader",
     "TemporalGraphSplits",
     "build_hetero_data",
     "compute_edge_features",

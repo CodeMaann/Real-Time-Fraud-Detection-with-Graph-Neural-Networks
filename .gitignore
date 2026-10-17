@@ -38,9 +38,12 @@ data/processed/
 !configs/*.yaml
 
 # ── Models / Experiments ──────────────────────────────────────────────
-/models/
-mlruns/
 mlflow.db
+mlruns/
+/models/
+data/raw/
+data/processed/
+*.pt
 
 # ── Docker ────────────────────────────────────────────────────────────
 *.log

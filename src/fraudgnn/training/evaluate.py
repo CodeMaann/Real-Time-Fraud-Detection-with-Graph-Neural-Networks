@@ -1,14 +1,17 @@
 """Comprehensive model evaluation module for fraud detection.
 
 Implements primary metric (PR-AUC), secondary metrics (ROC-AUC, F1, recall@1%FPR),
-confusion matrix extraction, visual diagnostic curves (PR curve, cost-vs-threshold curve),
-and business-cost loss evaluation:
+per-fraud-type recall, confusion matrix extraction, visual diagnostic curves
+(PR curve, cost-vs-threshold curve), and business-cost loss evaluation:
     Cost = FN * avg_fraud_amount + FP * review_cost
+
+Design: ALL thresholds are selected on validation data only; test evaluation
+uses the validation-selected thresholds without re-optimizing.
 """
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +45,7 @@ class EvaluationMetrics:
     min_cost_threshold: float
     review_cost: float
     avg_fraud_amount: float
+    per_type_recall: dict[str, float] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert metrics to dictionary for logging and serialization."""
@@ -55,8 +59,15 @@ def compute_metrics(
     review_cost: float = 10.0,
     default_fraud_amount: float = 500.0,
     threshold_steps: int = 100,
+    threshold_override: float | None = None,
+    fraud_types: np.ndarray | None = None,
 ) -> EvaluationMetrics:
     """Compute primary and secondary fraud detection metrics including business cost.
+
+    When ``threshold_override`` is provided, all threshold-dependent metrics
+    (F1, confusion matrix, business cost) use that threshold instead of
+    optimizing on the current data. This ensures test metrics use
+    validation-selected thresholds (no test-set threshold selection).
 
     Args:
         y_true: Binary ground truth labels (0 = legit, 1 = fraud).
@@ -65,6 +76,10 @@ def compute_metrics(
         review_cost: Cost in USD to manually investigate an alert (FP).
         default_fraud_amount: Fallback average dollar amount lost when fraud is missed (FN).
         threshold_steps: Number of threshold evaluation points.
+        threshold_override: If set, use this threshold for confusion matrix and cost
+            instead of optimizing on the current data. Designed for test evaluation
+            using a validation-selected threshold.
+        fraud_types: Optional array of fraud type strings for per-type recall.
 
     Returns:
         Populated EvaluationMetrics instance.
@@ -76,17 +91,19 @@ def compute_metrics(
     pr_auc = float(average_precision_score(y_true, y_pred_proba))
     roc_auc = float(roc_auc_score(y_true, y_pred_proba))
 
-    # 2. Optimal F1 Score search
+    # 2. Optimal F1 Score search (always computed for reference)
     precisions, recalls, thresholds = precision_recall_curve(y_true, y_pred_proba)
     # Avoid division by zero
-    f1_scores = np.where(
-        (precisions + recalls) > 0,
-        2 * (precisions * recalls) / (precisions + recalls),
-        0.0,
+    denom = precisions + recalls
+    f1_scores = np.divide(
+        2 * (precisions * recalls),
+        denom,
+        out=np.zeros_like(precisions),
+        where=denom > 0,
     )
     best_idx = int(np.argmax(f1_scores))
-    best_f1 = float(f1_scores[best_idx])
-    best_threshold = float(thresholds[best_idx]) if best_idx < len(thresholds) else 0.50
+    best_f1_data = float(f1_scores[best_idx])
+    best_threshold_data = float(thresholds[best_idx]) if best_idx < len(thresholds) else 0.50
 
     # 3. Recall at 1% FPR
     fpr, tpr, roc_thresholds = roc_curve(y_true, y_pred_proba)
@@ -100,7 +117,24 @@ def compute_metrics(
         recall_at_1pct_fpr = 0.0
         threshold_at_1pct_fpr = 1.0
 
-    # 4. Average fraud amount calculation for business cost
+    # 4. Decide which threshold to use for confusion matrix and cost
+    if threshold_override is not None:
+        operating_threshold = threshold_override
+        # Recompute F1 at the override threshold
+        y_pred_override = (y_pred_proba >= operating_threshold).astype(int)
+        tp_o = int(((y_pred_override == 1) & (y_true == 1)).sum())
+        fp_o = int(((y_pred_override == 1) & (y_true == 0)).sum())
+        fn_o = int(((y_pred_override == 0) & (y_true == 1)).sum())
+        prec_o = tp_o / max(1, tp_o + fp_o)
+        rec_o = tp_o / max(1, tp_o + fn_o)
+        best_f1 = float(2 * prec_o * rec_o / max(1e-9, prec_o + rec_o))
+        best_threshold = operating_threshold
+    else:
+        best_f1 = best_f1_data
+        best_threshold = best_threshold_data
+        operating_threshold = best_threshold
+
+    # 5. Average fraud amount calculation for business cost
     if amounts is not None and len(amounts) == len(y_true):
         fraud_mask = y_true == 1
         avg_fraud_amt = (
@@ -109,16 +143,16 @@ def compute_metrics(
     else:
         avg_fraud_amt = default_fraud_amount
 
-    # 5. Confusion matrix at best F1 threshold
-    y_pred_best = (y_pred_proba >= best_threshold).astype(int)
+    # 6. Confusion matrix at operating threshold
+    y_pred_best = (y_pred_proba >= operating_threshold).astype(int)
     cm = confusion_matrix(y_true, y_pred_best, labels=[0, 1])
     tn, fp, fn, tp = map(int, cm.ravel())
 
-    # Business cost at best F1 threshold:
+    # Business cost at operating threshold:
     # Cost = FN * avg_fraud_amount + FP * review_cost
     total_cost = float(fn * avg_fraud_amt + fp * review_cost)
 
-    # 6. Global Minimum Cost Threshold Search
+    # 7. Global Minimum Cost Threshold Search
     eval_thresholds = np.linspace(0.01, 0.99, threshold_steps)
     min_cost = float("inf")
     min_cost_thresh = 0.5
@@ -131,6 +165,20 @@ def compute_metrics(
         if cost_val < min_cost:
             min_cost = cost_val
             min_cost_thresh = float(thresh)
+
+    # 8. Per-fraud-type recall at operating threshold
+    per_type_recall: dict[str, float] = {}
+    if fraud_types is not None and len(fraud_types) == len(y_true):
+        fraud_type_arr = np.asarray(fraud_types)
+        unique_types = sorted(set(fraud_type_arr[y_true == 1].tolist()) - {"legitimate"})
+        for ft in unique_types:
+            ft_mask = fraud_type_arr == ft
+            n_total = int(ft_mask.sum())
+            if n_total > 0:
+                n_caught = int(y_pred_best[ft_mask].sum())
+                per_type_recall[ft] = float(n_caught / n_total)
+            else:
+                per_type_recall[ft] = 0.0
 
     return EvaluationMetrics(
         pr_auc=pr_auc,
@@ -148,6 +196,7 @@ def compute_metrics(
         min_cost_threshold=min_cost_thresh,
         review_cost=review_cost,
         avg_fraud_amount=avg_fraud_amt,
+        per_type_recall=per_type_recall,
     )
 
 
@@ -226,9 +275,9 @@ def plot_cost_curve(
     for thresh in thresholds:
         y_p = (y_pred_proba >= thresh).astype(int)
         cm = confusion_matrix(y_true, y_p, labels=[0, 1])
-        _, fp, fn, _ = cm.ravel()
-        cost_fp = float(fp * review_cost)
-        cost_fn = float(fn * avg_fraud_amount)
+        _, fp_val, fn_val, _ = cm.ravel()
+        cost_fp = float(fp_val * review_cost)
+        cost_fn = float(fn_val * avg_fraud_amount)
         fp_costs.append(cost_fp)
         fn_costs.append(cost_fn)
         total_costs.append(cost_fp + cost_fn)

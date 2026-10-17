@@ -154,3 +154,37 @@ def test_load_data_config() -> None:
     cfg_default = load_data_config("configs/default.yaml")
     assert cfg_default.num_transactions == 500_000
     assert cfg_default.fraud_ratio == pytest.approx(0.008)
+
+
+def test_hardened_simulator_label_noise(small_config: DataConfig) -> None:
+    """Label noise must flip a small fraction of fraud labels to 0 while keeping fraud_type."""
+    cfg = small_config.model_copy(update={"label_noise_rate": 0.10, "fraud_ratio": 0.05})
+    df = TransactionSimulator(cfg).generate()
+
+    # Total rows generated with fraud typologies
+    non_legit = df[df["fraud_type"] != "legitimate"]
+    assert len(non_legit) > 0
+
+    # With 10% label noise, some transactions with fraud_type != 'legitimate' should have is_fraud == 0
+    flipped_fraud = df[(df["fraud_type"] != "legitimate") & (df["is_fraud"] == 0)]
+    assert len(flipped_fraud) > 0, "Expected label noise to flip some fraud labels to 0."
+
+
+def test_hardened_simulator_ring_normal_amounts(small_config: DataConfig) -> None:
+    """Hardened ring members must draw amounts from normal user distributions."""
+    cfg = small_config.model_copy(
+        update={
+            "ring_use_normal_amounts": True,
+            "fraud_ring_weight": 1.0,
+            "mule_weight": 0.0,
+            "card_testing_weight": 0.0,
+            "account_takeover_weight": 0.0,
+            "merchant_collusion_weight": 0.0,
+        }
+    )
+    df = TransactionSimulator(cfg).generate()
+    ring_tx = df[df["fraud_type"] == "fraud_ring"]
+    assert len(ring_tx) > 0
+
+    # Amounts should span typical small-to-moderate values, not narrow anomalous ranges
+    assert ring_tx["amount"].min() < 100.0

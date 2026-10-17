@@ -119,3 +119,80 @@ def test_baseline_fit_predict_and_persistence(
     loaded_baseline = XGBoostBaseline(cfg).load(model_file)
     reloaded_probs = loaded_baseline.predict_proba(val_df[feature_cols])
     np.testing.assert_allclose(val_probs, reloaded_probs, atol=1e-5)
+
+
+def test_threshold_selected_on_val_only() -> None:
+    """Thresholds must come from validation only; test metrics must not optimize threshold on test."""
+    # Create distinct val and test distributions where the optimal F1 threshold differs
+    y_val = np.array([0, 0, 0, 0, 1, 1, 1, 1])
+    y_val_prob = np.array([0.1, 0.2, 0.3, 0.4, 0.6, 0.7, 0.8, 0.9])
+
+    # Validation optimal threshold search
+    val_metrics = compute_metrics(y_val, y_val_prob)
+    val_selected_thresh = val_metrics.best_threshold
+
+    # Test distribution where optimal threshold on test would be completely different (e.g., 0.35)
+    y_test = np.array([0, 0, 0, 0, 1, 1, 1, 1])
+    y_test_prob = np.array([0.05, 0.10, 0.15, 0.20, 0.40, 0.45, 0.50, 0.55])
+
+    # 1. Without override, test would optimize on test set (leakage/cheating)
+    test_metrics_cheating = compute_metrics(y_test, y_test_prob)
+    assert test_metrics_cheating.best_threshold < 0.45
+
+    # 2. With threshold_override from validation, test uses val threshold
+    test_metrics_honest = compute_metrics(
+        y_test,
+        y_test_prob,
+        threshold_override=val_selected_thresh,
+    )
+    assert test_metrics_honest.best_threshold == val_selected_thresh
+    # At val_selected_thresh (around 0.6), test probabilities (all <= 0.55) produce 0 positive predictions
+    assert test_metrics_honest.tp == 0
+    assert test_metrics_honest.fn == 4
+
+
+def test_per_fraud_type_recall_computation() -> None:
+    """compute_metrics must accurately break down recall for each fraud typology."""
+    y_true = np.array([0, 0, 1, 1, 1, 1, 1, 1])
+    y_pred_proba = np.array([0.1, 0.2, 0.9, 0.85, 0.8, 0.1, 0.95, 0.2])
+    fraud_types = np.array(
+        [
+            "legitimate",
+            "legitimate",
+            "fraud_ring",
+            "fraud_ring",
+            "mule",
+            "mule",
+            "card_testing",
+            "card_testing",
+        ]
+    )
+
+    metrics = compute_metrics(
+        y_true=y_true,
+        y_pred_proba=y_pred_proba,
+        threshold_override=0.5,
+        fraud_types=fraud_types,
+    )
+
+    assert "fraud_ring" in metrics.per_type_recall
+    assert "mule" in metrics.per_type_recall
+    assert "card_testing" in metrics.per_type_recall
+    assert "legitimate" not in metrics.per_type_recall
+
+    # fraud_ring: 2 samples, both prob >= 0.5 -> recall = 1.0
+    assert metrics.per_type_recall["fraud_ring"] == 1.0
+    # mule: 2 samples, 1 prob >= 0.5, 1 prob < 0.5 -> recall = 0.5
+    assert metrics.per_type_recall["mule"] == 0.5
+    # card_testing: 2 samples, 1 prob >= 0.5, 1 prob < 0.5 -> recall = 0.5
+    assert metrics.per_type_recall["card_testing"] == 0.5
+
+
+def test_no_fraud_type_or_label_in_feature_columns() -> None:
+    """Neither fraud_type, is_fraud, nor any label derivatives may ever be a model feature."""
+    feature_cols = get_feature_column_names()
+    disallowed = {"is_fraud", "fraud_type", "target", "label"}
+    for col in feature_cols:
+        assert col not in disallowed
+        assert not col.startswith("fraud_")
+        assert not col.endswith("_fraud")

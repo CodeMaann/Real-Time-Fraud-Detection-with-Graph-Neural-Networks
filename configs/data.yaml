@@ -1,6 +1,7 @@
 # ── Data Generation Configuration for FraudGNN ────────────────────────
 # Generates realistic synthetic transaction streams with GNN-amenable graph structures
 # and injected financial fraud typologies.
+# v2: Hardened for meaningful GNN vs tabular benchmark (Phase 2.5).
 
 raw_dir: data/raw
 processed_dir: data/processed
@@ -12,41 +13,71 @@ num_days: 90
 start_date: "2024-01-01"
 num_users: 10000
 num_merchants: 1000
-num_devices: 15000
-num_ips: 25000
+num_devices: 8000
+num_ips: 12000
 
 # Target fraud rate: 0.8% (~4,000 fraud transactions in 500k)
 fraud_ratio: 0.008
-seed: 42
+seed: 2025
 
 # Fraud typology distribution weights (sum to 1.0)
-fraud_ring_weight: 0.25           # Coordinated accounts sharing devices/IPs/merchants
-mule_weight: 0.20                 # Rapid inbound-outbound forwarding
-card_testing_weight: 0.20         # Bursts of micro-charges followed by large purchase
-account_takeover_weight: 0.20     # Sudden country/device anomaly + high amount spike
+fraud_ring_weight: 0.30           # Coordinated accounts sharing devices/IPs/merchants
+mule_weight: 0.25                 # Rapid inbound-outbound forwarding
+card_testing_weight: 0.15         # Bursts of micro-charges followed by large purchase
+account_takeover_weight: 0.15     # Sudden country/device anomaly + high amount spike
 merchant_collusion_weight: 0.15   # High chargeback rate merchant cluster
 
-# Pattern hyper-parameters
+# ── Fraud ring parameters ──────────────────────────────────────────────
 ring_size_min: 5
 ring_size_max: 30
+# Ring members individually look like normal users:
+ring_use_normal_amounts: true     # Draw amounts from normal-user distribution
+ring_use_normal_hours: true       # Draw hours from normal circadian distribution
+ring_use_home_country: true       # Use member's own home country
+ring_timing_jitter_hours: 96.0    # Spread ring activity over longer window (less burst-y)
+
+# ── Mule parameters ───────────────────────────────────────────────────
 mule_burst_min: 2
 mule_burst_max: 5
+# Mule amounts drawn from normal-user distribution (signal is in graph paths, not amounts)
+mule_use_normal_amounts: true
+mule_amount_jitter: 0.3           # Variation around user's normal spending
+mule_inter_tx_minutes_min: 10.0   # Min minutes between mule forwards
+mule_inter_tx_minutes_max: 120.0  # Max minutes between mule forwards
+
+# ── Card testing parameters ───────────────────────────────────────────
 card_testing_burst_min: 3
 card_testing_burst_max: 6
-card_testing_small_min: 0.50
-card_testing_small_max: 3.00
-card_testing_large_min: 800.00
-card_testing_large_max: 3000.00
-ato_amount_multiplier: 4.5
+card_testing_small_min: 1.00
+card_testing_small_max: 15.00     # Overlap with normal small purchases
+card_testing_large_min: 150.00    # Reduced from 800 to overlap with normal high-value purchases
+card_testing_large_max: 800.00    # Reduced from 3000
+
+# ── Account takeover parameters ───────────────────────────────────────
+ato_amount_multiplier: 3.5        # Moderately elevated to reflect typical ATO spending surge
+ato_use_domestic_prob: 0.25       # 25% of ATOs are domestic
+ato_use_known_device_prob: 0.15   # 15% reuse a known device
+
+# ── Merchant collusion parameters ─────────────────────────────────────
 collusion_fraud_rate: 0.65
 
-# Legitimate graph noise (prevents trivial graph edge separation)
-legit_shared_device_prob: 0.08    # Legitimate family/office device sharing
-legit_shared_ip_prob: 0.15        # Public Wi-Fi / corporate VPN sharing
+# ── Legitimate noise (prevents trivial graph edge separation) ──────────
+legit_shared_device_prob: 0.18     # Family/office device sharing (up from 0.08)
+legit_shared_ip_prob: 0.30         # Public Wi-Fi / corporate VPN (up from 0.15)
+legit_device_cluster_frac: 0.10    # Fraction of users in shared-device clusters
+legit_device_cluster_size_min: 2   # Min users sharing a device
+legit_device_cluster_size_max: 6   # Max users sharing a device
+legit_ip_pool_frac: 0.04           # Fraction of IPs that are shared/public
+legit_travel_prob: 0.05            # 5% of legit tx from foreign country (up from 2%)
+legit_new_device_prob: 0.06        # 6% of legit tx from a new/unfamiliar device
+legit_large_purchase_prob: 0.03    # 3% of legit tx are large purchases (>$500)
 
-# Spending distribution (log-normal parameters for benign transactions)
+# ── Label noise ────────────────────────────────────────────────────────
+label_noise_rate: 0.015            # ~1.5% of fraud is undetectable by design
+
+# ── Spending distribution (log-normal parameters for benign transactions) ──
 base_amount_loc: 3.5              # Median baseline spending ~ $33
-base_amount_scale: 0.9
+base_amount_scale: 1.1            # Slightly wider variance (up from 0.9)
 
 # Circadian hourly probability distribution (24 hours, midnight to 23:00)
 hourly_weights:

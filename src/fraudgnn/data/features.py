@@ -18,16 +18,21 @@ def compute_tabular_features(
     df: pd.DataFrame,
     smoothing_alpha: float = 10.0,
     prior_fraud_rate: float = 0.008,
+    include_label_features: bool = True,
 ) -> pd.DataFrame:
     """Engineer strictly causal tabular features for fraud detection.
 
     All rolling windows use ``closed='left'`` to exclude the current transaction.
-    Device sharing and merchant risk rates are computed expanding-only over historical data.
+    Device sharing and merchant features are computed expanding-only over historical data.
+    When ``include_label_features=False``, no past fraud labels are used, replacing
+    ``merchant_risk_rate`` with label-free ``log_merch_tx_count_past``.
 
     Args:
         df: Chronologically sorted transaction DataFrame.
         smoothing_alpha: Empirical Bayes smoothing parameter for merchant risk rate.
         prior_fraud_rate: Prior expected fraud rate for Bayesian smoothing.
+        include_label_features: If True, include merchant_risk_rate; if False,
+            use label-free merchant transaction volume.
 
     Returns:
         DataFrame enriched with engineered feature columns.
@@ -76,18 +81,15 @@ def compute_tabular_features(
     feat_df["log_time_delta_user"] = np.log1p(delta_user)
 
     # ── 3. Rolling Windows per User (1h, 24h, 7d) ─────────────────────────
-    # Sort by user_id and timestamp to apply contiguous rolling
     df_u = feat_df.sort_values(["user_id", "timestamp"])
     u_grouped = df_u.set_index("timestamp").groupby("user_id")["amount"]
 
     for window in ["1h", "24h", "7d"]:
-        # closed='left' strictly excludes current transaction timestamp
         c_vals = u_grouped.rolling(window, closed="left").count().fillna(0.0).to_numpy()
         s_vals = u_grouped.rolling(window, closed="left").sum().fillna(0.0).to_numpy()
         df_u[f"user_tx_count_{window}"] = c_vals
         df_u[f"user_amt_sum_{window}"] = s_vals
 
-    # Restore temporal ordering
     feat_df = df_u.sort_values("_orig_idx").reset_index(drop=True)
 
     # ── 4. Rolling Windows per Card (1h, 24h, 7d) ─────────────────────────
@@ -103,8 +105,6 @@ def compute_tabular_features(
     feat_df = df_c.sort_values("_orig_idx").reset_index(drop=True)
 
     # ── 5. Causal Device-Sharing Count ───────────────────────────────────
-    # Count how many distinct users have operated this device up to current transaction
-    # First time a user is seen on this device marks a new distinct user (+1)
     first_seen_mask = ~feat_df.duplicated(subset=["device_id", "user_id"])
     feat_df["device_user_count_past"] = (
         first_seen_mask.astype(int)
@@ -113,33 +113,37 @@ def compute_tabular_features(
         .to_numpy(dtype=np.float64)
     )
 
-    # ── 6. Causal Merchant Risk Rate (Empirical Bayes Smoothed) ───────────
-    # Computed using ONLY prior transactions of that merchant
+    # ── 6. Merchant Features (Causal) ────────────────────────────────────
     merch_past_tx = feat_df.groupby("merchant_id").cumcount().to_numpy(dtype=np.float64)
-    merch_past_fraud = (
-        feat_df.groupby("merchant_id")["is_fraud"].cumsum() - feat_df["is_fraud"]
-    ).to_numpy(dtype=np.float64)
-    feat_df["merchant_risk_rate"] = (merch_past_fraud + smoothing_alpha * prior_fraud_rate) / (
-        merch_past_tx + smoothing_alpha
-    )
+    feat_df["log_merch_tx_count_past"] = np.log1p(merch_past_tx)
+
+    if include_label_features and "is_fraud" in feat_df.columns:
+        merch_past_fraud = (
+            feat_df.groupby("merchant_id")["is_fraud"].cumsum() - feat_df["is_fraud"]
+        ).to_numpy(dtype=np.float64)
+        feat_df["merchant_risk_rate"] = (merch_past_fraud + smoothing_alpha * prior_fraud_rate) / (
+            merch_past_tx + smoothing_alpha
+        )
 
     # ── 7. Categorical Encodings ──────────────────────────────────────────
-    # One-hot encode channel
     for ch in ["mobile", "web", "pos"]:
         feat_df[f"channel_{ch}"] = (feat_df["channel"] == ch).astype(np.float32)
 
-    # Clean up temporary index columns
     feat_df.drop(columns=["_orig_idx", "_ts_sec"], inplace=True)
-
     return feat_df
 
 
-def get_feature_column_names() -> list[str]:
+def get_feature_column_names(include_label_features: bool = True) -> list[str]:
     """Return list of model feature column names (excluding identifiers and targets).
 
+    Args:
+        include_label_features: If True, include 'merchant_risk_rate'; if False,
+            include 'log_merch_tx_count_past'.
+
     Returns:
-        List of feature column names.
+        List of 27 feature column names.
     """
+    merch_col = "merchant_risk_rate" if include_label_features else "log_merch_tx_count_past"
     return [
         "amount",
         "log_amount",
@@ -164,7 +168,7 @@ def get_feature_column_names() -> list[str]:
         "card_tx_count_7d",
         "card_amt_sum_7d",
         "device_user_count_past",
-        "merchant_risk_rate",
+        merch_col,
         "channel_mobile",
         "channel_web",
         "channel_pos",

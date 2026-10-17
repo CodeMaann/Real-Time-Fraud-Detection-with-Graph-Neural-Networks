@@ -4,6 +4,8 @@ Implements gradient-boosted decision trees with:
 1. Class imbalance handling via exact scale_pos_weight.
 2. Early stopping based on validation PR-AUC (eval_metric="aucpr").
 3. End-to-end MLflow experiment tracking: parameters, metrics, plots, and model artifact.
+4. Per-fraud-type recall breakdown.
+5. All thresholds selected on VALIDATION, applied to test (no test-set optimization).
 """
 
 from __future__ import annotations
@@ -166,8 +168,9 @@ def train_and_evaluate_baseline(
     1. Chronological feature engineering.
     2. Strict temporal splitting (train / val / test).
     3. Model training with early stopping on PR-AUC.
-    4. Metric evaluation: PR-AUC, ROC-AUC, F1, recall@1%FPR, and business cost.
-    5. MLflow experiment logging with visual artifacts.
+    4. Metric evaluation: PR-AUC, ROC-AUC, F1, recall@1%FPR, per-type recall, cost.
+    5. ALL thresholds selected on validation; applied to test without re-optimization.
+    6. MLflow experiment logging with visual artifacts.
 
     Args:
         config: Validated BaselineConfig.
@@ -261,25 +264,43 @@ def train_and_evaluate_baseline(
         )
 
         # Predictions
-        print("[5/5] Evaluating test set and generating diagnostic plots...")
+        print("[5/5] Evaluating on validation and test sets...")
         y_val_prob = baseline.predict_proba(X_val)
         y_test_prob = baseline.predict_proba(X_test)
 
+        # Measure inference latency
+        t0_lat = time.perf_counter()
+        _ = baseline.predict_proba(X_test)
+        inference_latency_ms = (time.perf_counter() - t0_lat) / len(X_test) * 1000
+
+        # Val metrics: threshold is optimized HERE on validation data
         val_metrics = compute_metrics(
             y_val.to_numpy(),
             y_val_prob,
             amounts=val_df["amount"].to_numpy(),
             review_cost=config.cost.review_cost,
             default_fraud_amount=config.cost.default_fraud_amount,
+            fraud_types=val_df["fraud_type"].to_numpy(),
         )
 
+        # Test metrics: use validation-selected threshold (NO test-set optimization)
         test_metrics = compute_metrics(
             y_test.to_numpy(),
             y_test_prob,
             amounts=test_df["amount"].to_numpy(),
             review_cost=config.cost.review_cost,
             default_fraud_amount=config.cost.default_fraud_amount,
+            threshold_override=val_metrics.best_threshold,
+            fraud_types=test_df["fraud_type"].to_numpy(),
         )
+
+        # Feature importance
+        importance: dict[str, float] = {}
+        if baseline.model is not None:
+            raw_scores = baseline.model.get_booster().get_score(importance_type="gain")
+            importance = {
+                k: float(v if isinstance(v, (int, float)) else v[0]) for k, v in raw_scores.items()
+            }
 
         # Log MLflow metrics
         mlflow.log_metrics(
@@ -289,6 +310,7 @@ def train_and_evaluate_baseline(
                 "val_f1": val_metrics.f1,
                 "val_recall_1pct_fpr": val_metrics.recall_at_1pct_fpr,
                 "val_total_cost": val_metrics.total_cost,
+                "val_threshold": val_metrics.best_threshold,
                 "test_pr_auc": test_metrics.pr_auc,
                 "test_roc_auc": test_metrics.roc_auc,
                 "test_f1": test_metrics.f1,
@@ -296,8 +318,15 @@ def train_and_evaluate_baseline(
                 "test_total_cost": test_metrics.total_cost,
                 "test_min_cost": test_metrics.min_cost,
                 "test_min_cost_threshold": test_metrics.min_cost_threshold,
+                "inference_latency_ms": inference_latency_ms,
             }
         )
+
+        # Log per-fraud-type recall to MLflow
+        for ft, recall in val_metrics.per_type_recall.items():
+            mlflow.log_metric(f"val_recall_{ft}", recall)
+        for ft, recall in test_metrics.per_type_recall.items():
+            mlflow.log_metric(f"test_recall_{ft}", recall)
 
         # Generate & log artifact plots
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -319,7 +348,7 @@ def train_and_evaluate_baseline(
             cm_plot = plot_confusion_matrix(
                 test_metrics,
                 tmp_p / "test_confusion_matrix.png",
-                title=f"XGBoost Baseline Confusion Matrix (Thresh={test_metrics.best_threshold:.2f})",
+                title=f"XGBoost Baseline CM (Val Thresh={val_metrics.best_threshold:.2f})",
             )
 
             mlflow.log_artifact(str(pr_plot))
@@ -338,23 +367,47 @@ def train_and_evaluate_baseline(
     print(f"Validation ROC-AUC          : {val_metrics.roc_auc:.4f}")
     print(f"Validation Recall @ 1% FPR  : {val_metrics.recall_at_1pct_fpr:.4f}")
     print(
-        f"Validation Best F1          : {val_metrics.f1:.4f} (Thresh: {val_metrics.best_threshold:.2f})"
+        f"Validation Best F1          : {val_metrics.f1:.4f} (Thresh: {val_metrics.best_threshold:.4f})"
     )
     print("-" * 70)
     print(f"TEST PR-AUC (Primary)       : {test_metrics.pr_auc:.4f}")
     print(f"TEST ROC-AUC                : {test_metrics.roc_auc:.4f}")
     print(f"TEST Recall @ 1% FPR        : {test_metrics.recall_at_1pct_fpr:.4f}")
     print(
-        f"TEST Best F1                : {test_metrics.f1:.4f} (Thresh: {test_metrics.best_threshold:.2f})"
+        f"TEST F1 @ Val Threshold     : {test_metrics.f1:.4f} (Using Val Thresh: {val_metrics.best_threshold:.4f})"
     )
     print(
         f"TEST Confusion Matrix       : TN={test_metrics.tn:,}, FP={test_metrics.fp:,}, FN={test_metrics.fn:,}, TP={test_metrics.tp:,}"
     )
-    print(f"TEST Business Cost (Best F1): ${test_metrics.total_cost:,.2f}")
+    print(f"TEST Business Cost          : ${test_metrics.total_cost:,.2f}")
     print(
         f"TEST Minimum Business Cost  : ${test_metrics.min_cost:,.2f} (at Thresh: {test_metrics.min_cost_threshold:.2f})"
     )
-    print(f"Model saved to              : {config.model.model_save_path}")
+    print(f"Inference Latency           : {inference_latency_ms:.4f} ms/sample")
+
+    # Feature importance
+    if importance:
+        print("\n" + "-" * 70)
+        print("  TOP-10 FEATURE IMPORTANCE (GAIN)")
+        print("-" * 70)
+        sorted_imp = sorted(importance.items(), key=lambda x: x[1], reverse=True)
+        for rank, (feat, gain) in enumerate(sorted_imp[:10], 1):
+            print(f"  {rank:2d}. {feat:<30s} gain = {gain:,.2f}")
+
+    # Per-fraud-type recall
+    print("\n" + "-" * 70)
+    print(f"  PER-FRAUD-TYPE RECALL @ Val-Selected Threshold = {val_metrics.best_threshold:.4f}")
+    print("-" * 70)
+    print(f"  {'Type':<25s} {'Val Recall':>12s}  {'Test Recall':>12s}")
+    all_types = sorted(
+        set(list(val_metrics.per_type_recall.keys()) + list(test_metrics.per_type_recall.keys()))
+    )
+    for ft in all_types:
+        v_r = val_metrics.per_type_recall.get(ft, float("nan"))
+        t_r = test_metrics.per_type_recall.get(ft, float("nan"))
+        print(f"  {ft:<25s} {v_r:>12.4f}  {t_r:>12.4f}")
+
+    print(f"\nModel saved to              : {config.model.model_save_path}")
     print(
         f"MLflow Run Logged to        : {config.mlflow_tracking_uri} ({config.mlflow_experiment_name})"
     )

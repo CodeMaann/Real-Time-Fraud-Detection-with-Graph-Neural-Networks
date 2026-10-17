@@ -43,24 +43,48 @@ class DataConfig(BaseModel):
     # Pattern specific hyper-parameters (no magic numbers in code)
     ring_size_min: int = Field(default=5, ge=2)
     ring_size_max: int = Field(default=30, ge=5)
+    ring_use_normal_amounts: bool = Field(default=True)
+    ring_use_normal_hours: bool = Field(default=True)
+    ring_use_home_country: bool = Field(default=True)
+    ring_timing_jitter_hours: float = Field(default=96.0, gt=0.0)
+
     mule_burst_min: int = Field(default=2, ge=1)
     mule_burst_max: int = Field(default=5, ge=2)
+    mule_use_normal_amounts: bool = Field(default=True)
+    mule_amount_jitter: float = Field(default=0.3, ge=0.0)
+    mule_inter_tx_minutes_min: float = Field(default=10.0, gt=0.0)
+    mule_inter_tx_minutes_max: float = Field(default=120.0, gt=0.0)
+
     card_testing_burst_min: int = Field(default=3, ge=2)
     card_testing_burst_max: int = Field(default=6, ge=3)
-    card_testing_small_min: float = Field(default=0.50, gt=0.0)
-    card_testing_small_max: float = Field(default=3.00, gt=0.0)
-    card_testing_large_min: float = Field(default=800.0, gt=0.0)
-    card_testing_large_max: float = Field(default=3000.0, gt=0.0)
-    ato_amount_multiplier: float = Field(default=4.5, gt=1.0)
+    card_testing_small_min: float = Field(default=1.00, gt=0.0)
+    card_testing_small_max: float = Field(default=15.00, gt=0.0)
+    card_testing_large_min: float = Field(default=150.0, gt=0.0)
+    card_testing_large_max: float = Field(default=800.0, gt=0.0)
+
+    ato_amount_multiplier: float = Field(default=1.8, gt=1.0)
+    ato_use_domestic_prob: float = Field(default=0.40, ge=0.0, le=1.0)
+    ato_use_known_device_prob: float = Field(default=0.25, ge=0.0, le=1.0)
+
     collusion_fraud_rate: float = Field(default=0.65, gt=0.0, le=1.0)
 
-    # Legitimate noise parameters
-    legit_shared_device_prob: float = Field(default=0.08, ge=0.0, le=1.0)
-    legit_shared_ip_prob: float = Field(default=0.15, ge=0.0, le=1.0)
+    # Legitimate noise parameters (prevents trivial graph separation)
+    legit_shared_device_prob: float = Field(default=0.18, ge=0.0, le=1.0)
+    legit_shared_ip_prob: float = Field(default=0.30, ge=0.0, le=1.0)
+    legit_device_cluster_frac: float = Field(default=0.10, ge=0.0, le=1.0)
+    legit_device_cluster_size_min: int = Field(default=2, ge=2)
+    legit_device_cluster_size_max: int = Field(default=6, ge=2)
+    legit_ip_pool_frac: float = Field(default=0.04, ge=0.0, le=1.0)
+    legit_travel_prob: float = Field(default=0.05, ge=0.0, le=1.0)
+    legit_new_device_prob: float = Field(default=0.06, ge=0.0, le=1.0)
+    legit_large_purchase_prob: float = Field(default=0.03, ge=0.0, le=1.0)
+
+    # Label noise: fraction of fraud that is undetectable by design
+    label_noise_rate: float = Field(default=0.025, ge=0.0, le=0.5)
 
     # Spending distribution parameters
     base_amount_loc: float = Field(default=3.5)
-    base_amount_scale: float = Field(default=0.9, gt=0.0)
+    base_amount_scale: float = Field(default=1.1, gt=0.0)
 
     # Circadian diurnal distribution (24 hourly weights, normalized internally)
     hourly_weights: list[float] = Field(
@@ -157,23 +181,49 @@ class ModelConfig(BaseModel):
         default="graphsage",
         pattern="^(graphsage|hetero_gat|xgboost)$",
     )
-    hidden_dim: int = Field(default=128, gt=0)
+    hidden_dim: int = Field(default=64, gt=0)
     num_layers: int = Field(default=2, ge=1)
-    dropout: float = Field(default=0.3, ge=0.0, le=1.0)
+    dropout: float = Field(default=0.2, ge=0.0, le=1.0)
     heads: int = Field(default=4, ge=1, description="Attention heads (GAT only)")
+    conv_type: str = Field(default="gat", description="Convolution type: gat or sage")
+    use_edge_attr: bool = Field(
+        default=True, description="Whether edge decoder consumes edge attributes"
+    )
+    edge_dim: int = Field(default=10, gt=0, description="Dimension of transaction edge attributes")
 
 
 class TrainingConfig(BaseModel):
     """Configuration for the training loop."""
 
-    epochs: int = Field(default=100, gt=0)
+    epochs: int = Field(default=10, gt=0)
     batch_size: int = Field(default=512, gt=0)
     learning_rate: float = Field(default=1e-3, gt=0.0)
     weight_decay: float = Field(default=1e-5, ge=0.0)
-    patience: int = Field(default=10, ge=1, description="Early-stopping patience")
+    patience: int = Field(default=5, ge=1, description="Early-stopping patience on val PR-AUC")
     seed: int = 42
+    gradient_clip_val: float = Field(default=1.0, gt=0.0)
+    lr_scheduler_factor: float = Field(default=0.5, gt=0.0, lt=1.0)
+    lr_scheduler_patience: int = Field(default=2, ge=1)
+    loss_type: str = Field(
+        default="focal", description="Loss function: focal, weighted_bce, or bce"
+    )
+    focal_gamma: float = Field(default=2.0, ge=0.0)
+    focal_alpha: float | None = Field(default=0.25)
+    pos_weight: float | None = Field(default=None)
+    num_neighbors: list[int] = Field(default=[10, 10])
+    model_save_path: Path = Path("models/best_gnn.pt")
     mlflow_tracking_uri: str = "sqlite:///mlflow.db"
     mlflow_experiment_name: str = "fraud-gnn"
+
+
+class GNNConfig(BaseModel):
+    """Configuration for GNN model training and evaluation."""
+
+    data_dir: Path = Path("data/processed")
+    raw_data_path: Path = Path("data/raw/transactions.parquet")
+    model: ModelConfig = ModelConfig()
+    training: TrainingConfig = TrainingConfig()
+    cost: CostConfig = CostConfig()
 
 
 class ServingConfig(BaseModel):
@@ -316,3 +366,22 @@ def load_baseline_config(path: str | Path) -> BaselineConfig:
     if "baseline" in raw and isinstance(raw["baseline"], dict):
         return BaselineConfig(**raw["baseline"])
     return BaselineConfig(**raw)
+
+
+def load_gnn_config(path: str | Path) -> GNNConfig:
+    """Load and validate GNNConfig from a YAML file.
+
+    Args:
+        path: Filesystem path to a YAML configuration file.
+
+    Returns:
+        A validated ``GNNConfig`` instance.
+    """
+    config_path = Path(path)
+    if not config_path.exists():
+        raise FileNotFoundError(f"Config file not found: {config_path}")
+
+    with open(config_path, encoding="utf-8") as fh:
+        raw: dict[str, Any] = yaml.safe_load(fh) or {}
+
+    return GNNConfig(**raw)

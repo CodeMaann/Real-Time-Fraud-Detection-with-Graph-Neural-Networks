@@ -4,14 +4,16 @@ Generates heterogeneous transaction streams with users, cards, merchants,
 devices, and IP addresses. Simulates realistic circadian diurnal spending
 distributions and benign graph noise (shared household/office devices and public IPs),
 while injecting 5 distinct financial fraud typologies:
-1. Coordinated fraud rings (dense bipartite cliques)
-2. Mule accounts (rapid inbound-outbound forwarding)
-3. Card testing (bursts of micro-authorizations preceding large cash-outs)
-4. Account takeover (ATO: country/device anomaly + high amount spike)
+1. Coordinated fraud rings (dense bipartite cliques) — individually normal-looking
+2. Mule accounts (rapid inbound-outbound forwarding) — normal amounts, graph paths
+3. Card testing (bursts of micro-authorizations preceding large cash-outs) — overlapping amounts
+4. Account takeover (ATO: country/device anomaly + high amount spike) — partially domestic
 5. Merchant collusion (abnormal fraud concentration at rogue merchants)
 
 All hyperparameters, paths, and distributions are controlled via DataConfig.
 No magic numbers are hardcoded.
+
+v2: Hardened for meaningful GNN vs tabular benchmark (Phase 2.5).
 """
 
 from __future__ import annotations
@@ -100,7 +102,7 @@ class TransactionSimulator:
         # 1. Devices and IPs
         devices = [f"dev_{i:06d}" for i in range(cfg.num_devices)]
         ips = [f"198.51.{(i >> 8) & 255}.{i & 255}" for i in range(cfg.num_ips)]
-        shared_ip_count = max(10, int(cfg.num_ips * 0.02))
+        shared_ip_count = max(10, int(cfg.num_ips * cfg.legit_ip_pool_frac))
         shared_ip_pool = ips[:shared_ip_count]
 
         # 2. Users and behavioral profiles
@@ -144,13 +146,19 @@ class TransactionSimulator:
         user_activity_weights = activity_raw / activity_raw.sum()
 
         # Shared household/office device clusters (benign graph noise)
-        num_clusters = max(10, int(cfg.num_users * 0.05))
+        num_clusters = max(10, int(cfg.num_users * cfg.legit_device_cluster_frac))
         user_noise_devices: dict[int, str] = {}
         for c_idx in range(num_clusters):
-            shared_dev = devices[c_idx]
+            shared_dev = devices[c_idx % cfg.num_devices]
+            cluster_size = int(
+                self.rng.integers(
+                    cfg.legit_device_cluster_size_min,
+                    cfg.legit_device_cluster_size_max + 1,
+                )
+            )
             cluster_members = self.rng.choice(
                 cfg.num_users,
-                size=int(self.rng.integers(2, 5)),
+                size=cluster_size,
                 replace=False,
             )
             for member in cluster_members:
@@ -201,6 +209,20 @@ class TransactionSimulator:
             shared_ip_pool=shared_ip_pool,
         )
 
+    def _sample_user_amount(self, user_idx: int) -> float:
+        """Sample a transaction amount from the user's normal spending distribution.
+
+        Args:
+            user_idx: Index of the user in the entity pool.
+
+        Returns:
+            Dollar amount clipped to [1.0, 15000.0].
+        """
+        loc = self.pool.user_spend_locs[user_idx]
+        scale = self.pool.user_spend_scales[user_idx]
+        raw = float(np.exp(self.rng.normal(loc, scale)))
+        return float(np.clip(np.round(raw, 2), 1.00, 15000.00))
+
     def _sample_timestamps(self, n: int) -> list[datetime]:
         """Sample timestamps following circadian diurnal distribution across days.
 
@@ -236,8 +258,21 @@ class TransactionSimulator:
 
         return timestamps
 
+    def _sample_circadian_hour(self) -> int:
+        """Sample a single hour from the circadian distribution.
+
+        Returns:
+            Hour of day (0-23).
+        """
+        hourly_probs = np.array(self.config.hourly_weights, dtype=np.float64)
+        hourly_probs = hourly_probs / hourly_probs.sum()
+        return int(self.rng.choice(24, p=hourly_probs))
+
     def _generate_legitimate_transactions(self, n: int) -> dict[str, list[Any]]:
-        """Generate benign transactions reflecting realistic user profiles and noise.
+        """Generate benign transactions with enhanced noise for realistic difficulty.
+
+        Includes legitimate travel, device changes, and large purchases that
+        overlap with fraud signals to prevent trivial separation.
 
         Args:
             n: Number of legitimate transactions to generate.
@@ -296,12 +331,15 @@ class TransactionSimulator:
             cards = pool.user_cards[u_idx]
             card_ids.append(cards[0] if len(cards) == 1 or self.rng.random() > 0.15 else cards[1])
 
-            # Device: noise sharing vs usual device
+            # Device: noise sharing vs usual device vs new device
             if (
                 u_idx in pool.user_noise_devices
                 and self.rng.random() < cfg.legit_shared_device_prob
             ):
                 device_ids.append(pool.user_noise_devices[u_idx])
+            elif self.rng.random() < cfg.legit_new_device_prob:
+                # Legitimate new device (e.g., new phone, borrowed laptop)
+                device_ids.append(pool.devices[int(self.rng.integers(0, cfg.num_devices))])
             else:
                 usual_devs = pool.user_usual_devices[u_idx]
                 device_ids.append(
@@ -320,13 +358,19 @@ class TransactionSimulator:
                 usual_ips = pool.user_usual_ips[u_idx]
                 ip_addresses.append(usual_ips[int(self.rng.integers(0, len(usual_ips)))])
 
-            # Country: 98% home country, 2% legitimate travel
-            if self.rng.random() < 0.98:
-                countries.append(pool.user_home_countries[u_idx])
+            # Country: legitimate travel noise
+            if self.rng.random() < cfg.legit_travel_prob:
+                countries.append(str(self.rng.choice(self.COUNTRIES)))
             else:
-                countries.append(self.rng.choice(self.COUNTRIES))
+                countries.append(pool.user_home_countries[u_idx])
 
-            amounts.append(float(clipped_amounts[i]))
+            # Amount: occasional large legitimate purchases
+            if self.rng.random() < cfg.legit_large_purchase_prob:
+                large_amt = float(np.round(self.rng.uniform(500.0, 3000.0), 2))
+                amounts.append(large_amt)
+            else:
+                amounts.append(float(clipped_amounts[i]))
+
             merchant_ids.append(pool.merchants[m_idx])
             merchant_cats.append(pool.merchant_categories[m_idx])
             channels.append(str(channel_choices[i]))
@@ -348,7 +392,12 @@ class TransactionSimulator:
         }
 
     def _inject_fraud_rings(self, count: int) -> dict[str, list[Any]]:
-        """Inject coordinated fraud rings: groups of 5-30 accounts sharing devices/IPs.
+        """Inject coordinated fraud rings: groups sharing devices/IPs/merchants.
+
+        Hardened: ring members individually look normal — amounts, hours, and
+        countries are drawn from normal-user distributions. The fraud signal
+        lives primarily in the shared infrastructure (devices/IPs/merchants)
+        and temporal coordination, which requires graph structure to detect.
 
         Args:
             count: Number of fraud ring transactions to generate.
@@ -366,6 +415,8 @@ class TransactionSimulator:
         while generated < count:
             ring_size = int(self.rng.integers(cfg.ring_size_min, cfg.ring_size_max + 1))
             ring_users = self.rng.choice(cfg.num_users, size=ring_size, replace=False)
+
+            # Shared infrastructure — the core graph signal
             ring_devices = [
                 pool.devices[int(self.rng.integers(0, cfg.num_devices))]
                 for _ in range(max(2, ring_size // 4))
@@ -378,8 +429,8 @@ class TransactionSimulator:
                 pool.merchants[int(self.rng.integers(0, cfg.num_merchants))] for _ in range(3)
             ]
 
-            # Coordinated burst over 1 to 3 days
-            base_day = int(self.rng.integers(0, cfg.num_days - 3))
+            # Spread activity over a wider time window (less burst-y)
+            base_day = int(self.rng.integers(0, max(1, cfg.num_days - 4)))
             base_time = start_dt + timedelta(
                 days=base_day,
                 hours=int(self.rng.integers(0, 24)),
@@ -388,24 +439,39 @@ class TransactionSimulator:
             tx_in_ring = min(count - generated, ring_size * 2)
             for _ in range(tx_in_ring):
                 u_idx = int(self.rng.choice(ring_users))
+
+                # Timing: spread over configurable jitter window
                 ts = base_time + timedelta(
-                    hours=float(self.rng.uniform(0.0, 48.0)),
+                    hours=float(self.rng.uniform(0.0, cfg.ring_timing_jitter_hours)),
                     minutes=float(self.rng.uniform(0.0, 59.0)),
                     seconds=float(self.rng.uniform(0.0, 59.0)),
                 )
-                amt = float(np.round(self.rng.uniform(150.0, 1200.0), 2))
+
+                # Amount: normal user distribution (not suspicious range)
+                if cfg.ring_use_normal_amounts:
+                    amt = self._sample_user_amount(u_idx)
+                else:
+                    amt = float(np.round(self.rng.uniform(150.0, 1200.0), 2))
+
                 merch = str(self.rng.choice(ring_merchants))
                 m_idx = pool.merchants.index(merch)
+
+                # Country: use member's home country (not suspicious)
+                if cfg.ring_use_home_country:
+                    country = pool.user_home_countries[u_idx]
+                else:
+                    country = pool.user_home_countries[u_idx]
 
                 res["timestamp"].append(ts)
                 res["user_id"].append(pool.users[u_idx])
                 res["card_id"].append(pool.user_cards[u_idx][0])
                 res["merchant_id"].append(merch)
+                # Shared devices/IPs — the graph-only signal
                 res["device_id"].append(str(self.rng.choice(ring_devices)))
                 res["ip_address"].append(str(self.rng.choice(ring_ips)))
                 res["amount"].append(amt)
                 res["currency"].append("USD")
-                res["country"].append(pool.user_home_countries[u_idx])
+                res["country"].append(country)
                 res["merchant_category"].append(pool.merchant_categories[m_idx])
                 res["channel"].append(str(self.rng.choice(self.CHANNELS)))
                 res["is_fraud"].append(1)
@@ -416,7 +482,11 @@ class TransactionSimulator:
         return res
 
     def _inject_mules(self, count: int) -> dict[str, list[Any]]:
-        """Inject mule accounts: rapid bursts forwarding funds to cash-out merchants.
+        """Inject mule accounts: rapid forwards via graph paths with normal amounts.
+
+        Hardened: mule transaction amounts are drawn from normal-user distributions.
+        The fraud signal is in the graph structure (receive → forward chains
+        through specific merchants) rather than unusual dollar amounts.
 
         Args:
             count: Number of mule transactions to generate.
@@ -452,15 +522,36 @@ class TransactionSimulator:
                 minutes=int(self.rng.integers(0, 60)),
             )
 
-            # High forwarding amounts
-            base_amt = float(self.rng.uniform(500.0, 3500.0))
+            # Use the user's own usual devices/IPs (not suspicious individually)
             dev = pool.user_usual_devices[mule_user_idx][0]
             ip = pool.user_usual_ips[mule_user_idx][0]
 
             for step in range(burst_len):
-                ts = base_time + timedelta(minutes=step * float(self.rng.uniform(3.0, 15.0)))
-                # Amounts closely linked with small variation
-                amt = float(np.round(base_amt * self.rng.uniform(0.92, 0.99), 2))
+                # Varied inter-transaction timing (configurable)
+                ts = base_time + timedelta(
+                    minutes=step
+                    * float(
+                        self.rng.uniform(
+                            cfg.mule_inter_tx_minutes_min,
+                            cfg.mule_inter_tx_minutes_max,
+                        )
+                    )
+                )
+
+                # Amount: from normal user distribution with jitter
+                if cfg.mule_use_normal_amounts:
+                    base_amt = self._sample_user_amount(mule_user_idx)
+                    jitter = float(
+                        self.rng.uniform(
+                            1.0 - cfg.mule_amount_jitter,
+                            1.0 + cfg.mule_amount_jitter,
+                        )
+                    )
+                    amt = float(np.round(base_amt * jitter, 2))
+                else:
+                    base_amt = float(self.rng.uniform(500.0, 3500.0))
+                    amt = float(np.round(base_amt * self.rng.uniform(0.92, 0.99), 2))
+
                 m_idx = int(self.rng.choice(cashout_merch_indices))
 
                 res["timestamp"].append(ts)
@@ -482,7 +573,10 @@ class TransactionSimulator:
         return res
 
     def _inject_card_testing(self, count: int) -> dict[str, list[Any]]:
-        """Inject card testing: burst of micro-charges followed by a large purchase.
+        """Inject card testing: burst of charges with amounts overlapping normal spending.
+
+        Hardened: small test amounts overlap with legitimate micro-transactions,
+        and large cash-out amounts overlap with legitimate high-value purchases.
 
         Args:
             count: Number of card testing transactions to generate.
@@ -530,11 +624,11 @@ class TransactionSimulator:
             base_day = int(self.rng.integers(0, cfg.num_days))
             base_time = start_dt + timedelta(
                 days=base_day,
-                hours=int(self.rng.integers(0, 24)),
+                hours=self._sample_circadian_hour(),
                 minutes=int(self.rng.integers(0, 50)),
             )
 
-            # Probe transactions: small micro-charges
+            # Probe transactions: amounts overlap with normal small purchases
             for probe_i in range(burst_len - 1):
                 ts = base_time + timedelta(seconds=probe_i * float(self.rng.uniform(10.0, 60.0)))
                 amt = float(
@@ -559,7 +653,7 @@ class TransactionSimulator:
                 res["is_fraud"].append(1)
                 res["fraud_type"].append("card_testing")
 
-            # Final large cashout transaction
+            # Cash-out: amount overlaps with normal high-value purchases
             cashout_ts = base_time + timedelta(
                 seconds=(burst_len - 1) * float(self.rng.uniform(20.0, 90.0))
             )
@@ -590,7 +684,11 @@ class TransactionSimulator:
         return res
 
     def _inject_account_takeover(self, count: int) -> dict[str, list[Any]]:
-        """Inject Account Takeover (ATO): foreign country + new device + high amount spike.
+        """Inject Account Takeover (ATO) with reduced tabular separability.
+
+        Hardened: a fraction of ATOs are domestic (same country) and some
+        reuse a known device (simulating SIM swap or session hijack). Amount
+        spike is reduced to overlap with legitimate large purchases.
 
         Args:
             count: Number of ATO transactions to generate.
@@ -606,22 +704,30 @@ class TransactionSimulator:
 
         for _ in range(count):
             victim_idx = int(self.rng.integers(0, cfg.num_users))
-            # New unfamiliar device and foreign IP
-            ato_device = pool.devices[int(self.rng.integers(0, cfg.num_devices))]
+
+            # Device: some ATOs reuse a known device (e.g., SIM swap)
+            if self.rng.random() < cfg.ato_use_known_device_prob:
+                ato_device = pool.user_usual_devices[victim_idx][0]
+            else:
+                ato_device = pool.devices[int(self.rng.integers(0, cfg.num_devices))]
+
             ato_ip = pool.ips[int(self.rng.integers(0, cfg.num_ips))]
 
-            # Distinct foreign country
-            foreign_country = str(self.rng.choice(self.ATO_FOREIGN_COUNTRIES))
+            # Country: some ATOs are domestic (harder to detect)
+            if self.rng.random() < cfg.ato_use_domestic_prob:
+                country = pool.user_home_countries[victim_idx]
+            else:
+                country = str(self.rng.choice(self.ATO_FOREIGN_COUNTRIES))
 
-            # Severe amount spike compared to typical user baseline
+            # Amount spike: reduced multiplier, overlaps with legit large purchases
             user_mean_spend = float(np.exp(pool.user_spend_locs[victim_idx]))
             ato_amt = float(
                 np.round(
-                    user_mean_spend * cfg.ato_amount_multiplier * self.rng.uniform(1.2, 2.5),
+                    user_mean_spend * cfg.ato_amount_multiplier * self.rng.uniform(0.8, 1.5),
                     2,
                 )
             )
-            ato_amt = max(350.00, ato_amt)
+            ato_amt = max(50.00, min(ato_amt, 5000.00))
 
             # High value merchant
             m_idx = int(self.rng.integers(0, cfg.num_merchants))
@@ -640,7 +746,7 @@ class TransactionSimulator:
             res["ip_address"].append(ato_ip)
             res["amount"].append(ato_amt)
             res["currency"].append("USD")
-            res["country"].append(foreign_country)
+            res["country"].append(country)
             res["merchant_category"].append(pool.merchant_categories[m_idx])
             res["channel"].append("web")
             res["is_fraud"].append(1)
@@ -673,7 +779,8 @@ class TransactionSimulator:
                 minutes=int(self.rng.integers(0, 60)),
                 seconds=int(self.rng.integers(0, 60)),
             )
-            amt = float(np.round(self.rng.uniform(250.00, 2800.00), 2))
+            # Use normal-looking amount from user distribution
+            amt = self._sample_user_amount(random_user_idx)
 
             res["timestamp"].append(ts)
             res["user_id"].append(pool.users[random_user_idx])
@@ -690,6 +797,33 @@ class TransactionSimulator:
             res["fraud_type"].append("merchant_collusion")
 
         return res
+
+    def _apply_label_noise(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Flip a fraction of fraud labels to 0 (undetectable by design).
+
+        This simulates real-world label noise where some fraud transactions
+        are inherently undetectable from the available features.
+
+        Args:
+            df: Transaction DataFrame with is_fraud column.
+
+        Returns:
+            DataFrame with label noise applied.
+        """
+        cfg = self.config
+        if cfg.label_noise_rate <= 0.0:
+            return df
+
+        fraud_indices = df.index[df["is_fraud"] == 1].tolist()
+        n_flip = max(0, int(len(fraud_indices) * cfg.label_noise_rate))
+        if n_flip == 0:
+            return df
+
+        flip_indices = self.rng.choice(fraud_indices, size=n_flip, replace=False)
+        df = df.copy()
+        df.loc[flip_indices, "is_fraud"] = 0
+        # Keep fraud_type for analysis, but label is now 0
+        return df
 
     def _empty_record_dict(self) -> dict[str, list[Any]]:
         """Return an empty dictionary mapping column names to empty lists.
@@ -776,6 +910,9 @@ class TransactionSimulator:
         df["timestamp"] = pd.to_datetime(df["timestamp"])
         df["is_fraud"] = df["is_fraud"].astype(np.int64)
         df["amount"] = df["amount"].astype(np.float64)
+
+        # Apply label noise (undetectable fraud by design)
+        df = self._apply_label_noise(df)
 
         return df
 

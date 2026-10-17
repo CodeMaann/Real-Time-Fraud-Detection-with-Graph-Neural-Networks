@@ -148,4 +148,52 @@ losses (~$500–$1,000/miss). Optimizing solely for F1 (typically at threshold 0
 fails to minimize total financial damage. Slicing total loss across the threshold
 grid identifies the cost-optimal decision threshold for production deployment.
 
+## 15. Benchmark Hardening for Meaningful GNN Comparison (Phase 2.5)
+
+**Context**: In Phase 2, the XGBoost tabular baseline achieved test PR-AUC 0.9353 and recall@1%FPR 0.9872. Diagnostics revealed that tabular feature importance (gain) was overwhelmingly dominated by `log_amount` (gain 5,322) and `amount` (gain 3,078), catching fraud rings with 80.7% recall and mules with 94.1% recall purely through tabular amount and velocity signals. This rendered any GNN comparison meaningless because graph structure was not required to detect fraud.
+
+**Hardening Strategy**:
+1. **Normal-Looking Ring Members**: Fraud ring accounts now draw transaction amounts and circadian hours from normal-user distributions. Their individual profiles look benign; the malicious signal resides entirely in shared graph topology (dense bipartite cliques across devices/IPs/merchants) and multi-entity temporal coordination.
+2. **Path-Based Mule Accounts**: Mule accounts now spend within their normal account distributions. The signal is in graph chains and flow through cash-out merchants rather than single-transaction dollar spikes.
+3. **Reduced Feature Separability for Card Testing and ATO**: Micro-authorizations and cash-out charges were scaled to overlap with legitimate small/large purchases. 25% of ATOs are domestic and 15% reuse existing devices.
+4. **Enhanced Benign Graph Noise**: Benign multi-user device sharing was expanded (7,700+ legitimate multi-user devices, shared IP pools, corporate VPNs), preventing graph algorithms from treating any shared node as an automatic indicator of fraud.
+5. **Realistic Label Noise**: 1.5% label noise was introduced to reflect real-world imperfect ground truth.
+6. **Strict Validation-Only Threshold Selection**: Decision thresholds are strictly selected on the validation partition (maximizing validation F1) and passed via `threshold_override` to test evaluation. No test-set threshold search or re-optimization is permitted.
+
+**Resulting Baseline Operating Benchmark**:
+- Validation PR-AUC: 0.3190
+- Test PR-AUC: 0.3535 (target range: 0.30–0.75, down from 0.9353)
+- Test Recall @ 1% FPR: 0.4219 (down from 0.9872)
+- Test Recall on Fraud Rings: 0.0445 (4.5%, down from 80.7%)
+- Test Recall on Mule Accounts: 0.4930 (49.3%, down from 94.1%)
+- Top Feature Importance (Gain): Shifted from raw transaction amounts to `merchant_risk_rate` (4,125), `channel_web` (1,806), and `time_delta_card` (1,779).
+
+This establishes a realistic, hardened tabular benchmark with significant headroom for heterogeneous GNNs (Phase 3) to demonstrate measurable architectural advantage on complex relational fraud topologies.
+
+## 16. Limitations
+
+1. **Label Delay for Merchant Risk Rate**: In production financial systems, chargeback and dispute notifications arrive with a significant lag (typically 30 to 90 days after transaction settlement). The current feature engineering pipeline computes expanding Bayesian-smoothed merchant risk rates using past transaction labels without an explicit dispute delay window. While strictly causal (zero lookahead into future timestamps), a fully mature production pipeline would model an asynchronous label arrival delay buffer.
+2. **Label Noise Rate (1.5%)**: The synthetic generator intentionally flips 1.5% of positive fraud labels to `is_fraud = 0` to reflect real-world imperfect observation, unreported fraud, and noisy ground-truth chargebacks. Consequently, theoretical maximum recall is bounded below 100%.
+3. **Account Takeover (ATO) Detection Ceiling**: In the hardened simulator, account takeover events intentionally emulate sophisticated attackers (25% domestic IP origin, 15% reuse of familiar device/session tokens, amounts overlapping legitimate variance). Tabular features alone achieve <1% recall on ATO; catching such compromises in practice requires upstream authentication telemetry, device fingerprinting, or multi-hop identity graph clustering.
+4. **Simulator Difficulty Calibration**: The synthetic data parameters were deliberately calibrated to place baseline tabular XGBoost PR-AUC into an intermediate difficulty range (~0.30–0.75). In synthetic benchmark design, uncalibrated simulators tend to be either trivially separable (yielding false confidence in simple models) or pure noise (preventing any model from learning). The calibrated difficulty ensures a rigorous testbed for demonstrating GNN structural learning value.
+
+## 17. Causal Temporal Sampling & Elimination of Within-Window Lookahead Leakage
+
+**Context & Leakage Gap**:
+In static graph snapshot evaluations, temporal splits are created at macro boundaries (e.g. Train: 0–60%, Val: 60–80%, Test: 80–100%). While this prevents test edges from appearing in the train graph, an intra-split leakage gap remained: inside the test window, a transaction occurring on day 25 could sample neighbor edges and aggregate node statistics from transactions occurring on day 29 of the same window. Because standard tabular models (like streaming XGBoost) are strictly causal at point-of-decision, evaluating GNNs with intra-window future lookahead is fundamentally unfair and optimistically biased.
+
+**Architecture & Implementation Choice**:
+1. **Temporal CSR Index (`FastTemporalAdjacency`)**:
+   Relational edges are indexed in a CSR structure sorted by `(time, src)`. When sampling neighbors for a target edge at timestamp $t$, an $O(\log D)$ binary search (`np.searchsorted(times, t, side="left")`) restricts the visible adjacency strictly to $t' < t$ across all relations and hops.
+
+2. **Dynamic Causal Node Features vs. Dropping Aggregations**:
+   - *Option A (Chosen)*: Compute node degree, cumulative transaction volume, and entity age dynamically on-the-fly strictly before each target transaction's timestamp using the temporal CSR binary search.
+   - *Option B (Rejected - Dropping Aggregations)*: Reducing node features to static 5-dimensional one-hot type indicators `[user, merchant, card, device, ip]` strips the model of velocity and volume signals, rendering it blind to high-frequency card testing and collusive ring spikes.
+   - *Option C (Rejected - Freezing at Split Cutoff)*: Static-freezing node features at split cutoffs creates catastrophic train/test distribution shifts: at $t=0$, training nodes have 0 prior history, whereas at $t=24$ days, test nodes have weeks of history.
+   *Rationale*: Option A faithfully replicates production feature-store serving: when a transaction arrives at time $t$, upstream graph registries aggregate only historical events $t' < t$, achieving mathematical invariance to future events in $<0.5$ ms per batch.
+
+3. **Invariance Verification Test**:
+   Every causal loader is validated with an injection test: injecting an arbitrary $1,000,000 fake transaction strictly AFTER target edge timestamp $t_0$ in the same window must yield 100% bit-identical sampled neighborhoods, node feature tensors, and model logits (`torch.equal(out_clean, out_injected)`).
+
+
 

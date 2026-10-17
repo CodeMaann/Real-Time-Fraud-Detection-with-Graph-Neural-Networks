@@ -126,4 +126,6 @@ is mostly undetectable by design. See [docs/design-decisions.md](docs/design-dec
 
 ## License
 
-Released under the [MIT License](LICENSE).
+Free for non-commercial use under the [PolyForm Noncommercial License 1.0.0](LICENSE).
+Commercial use (selling it, or building a paid product or service on it) requires my permission.
+For a commercial license, contact me via [GitHub](https://github.com/CodeMaann).

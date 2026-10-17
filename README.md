@@ -126,4 +126,4 @@ is mostly undetectable by design. See [docs/design-decisions.md](docs/design-dec
 
 ## License
 
-MIT
+Released under the [MIT License](LICENSE).

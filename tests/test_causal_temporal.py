@@ -416,3 +416,140 @@ def test_graphsage_causal_loader_future_invariance(synthetic_temporal_graph: Het
     assert torch.equal(out_clean, out_inj), (
         f"GraphSAGE output changed after future injection: {out_clean} vs {out_inj}"
     )
+
+
+def test_device_ip_decoder_future_injection_invariance(
+    synthetic_temporal_graph: HeteroData,
+) -> None:
+    """Verify that attaching device and IP node embeddings to decoder preserves bit-identical causality.
+
+    Injecting a massive transaction strictly after t0 must leave the target transaction's
+    device index, IP index, node representations, and final decoder fraud logit 100% bit-identical.
+    """
+    data = synthetic_temporal_graph
+    target_rel = ("user", "transacts_at", "merchant")
+
+    # Target edge index 2 at timestamp 3000
+    target_idx = 2
+    t0 = int(data[target_rel].edge_time[target_idx].item())
+    target_edge_index = data[target_rel].edge_index[:, target_idx : target_idx + 1]
+    target_label = data[target_rel].edge_label[target_idx : target_idx + 1]
+    target_time = data[target_rel].edge_time[target_idx : target_idx + 1]
+    target_attr = data[target_rel].edge_attr[target_idx : target_idx + 1]
+
+    # Device 2 and IP 2 used for this transaction
+    dev_target = torch.tensor([2], dtype=torch.long)
+    ip_target = torch.tensor([2], dtype=torch.long)
+
+    torch.manual_seed(4242)
+    model = HeteroGAT(
+        node_types=data.node_types,
+        edge_types=data.edge_types,
+        in_channels_dict={nt: 17 for nt in data.node_types},
+        hidden_channels=32,
+        edge_dim=27,
+        num_layers=2,
+        heads=2,
+        dropout=0.0,
+        conv_type="gat",
+        use_edge_attr=True,
+        use_device_ip=True,
+    )
+    model.eval()
+
+    # 1. Clean loader run
+    loader_clean = CausalLinkNeighborLoader(
+        data=data,
+        num_neighbors=[10, 10],
+        edge_label_index=(target_rel, target_edge_index),
+        edge_label=target_label,
+        edge_time=target_time,
+        edge_attr=target_attr,
+        device_index=dev_target,
+        ip_index=ip_target,
+        batch_size=1,
+        shuffle=False,
+        seed=42,
+    )
+    batch_clean = next(iter(loader_clean))
+    assert hasattr(batch_clean[target_rel], "device_index")
+    assert hasattr(batch_clean[target_rel], "ip_index")
+
+    with torch.no_grad():
+        out_clean = model(
+            x_dict={nt: batch_clean[nt].x for nt in batch_clean.node_types},
+            edge_index_dict={et: batch_clean[et].edge_index for et in batch_clean.edge_types},
+            edge_label_index=batch_clean[target_rel].edge_label_index,
+            edge_attr=batch_clean[target_rel].edge_attr,
+            device_index=batch_clean[target_rel].device_index,
+            ip_index=batch_clean[target_rel].ip_index,
+        )
+
+    # 2. Inject fake future transaction strictly AFTER t0 (t_fake = 3500 > 3000)
+    # Reusing device 2 and IP 2 with a massive fraud volume
+    t_fake = t0 + 500
+    fake_amount = 5_000_000.0
+    data_inj = copy.deepcopy(data)
+
+    fake_edge = torch.tensor([[2], [0]], dtype=torch.long)
+    fake_t = torch.tensor([t_fake], dtype=torch.long)
+    fake_attr = torch.zeros((1, 27), dtype=torch.float32)
+    fake_attr[0, 0] = fake_amount
+    fake_lbl = torch.tensor([1], dtype=torch.long)
+
+    data_inj[target_rel].edge_index = torch.cat([data_inj[target_rel].edge_index, fake_edge], dim=1)
+    data_inj[target_rel].edge_time = torch.cat([data_inj[target_rel].edge_time, fake_t], dim=0)
+    data_inj[target_rel].edge_attr = torch.cat([data_inj[target_rel].edge_attr, fake_attr], dim=0)
+    data_inj[target_rel].edge_label = torch.cat([data_inj[target_rel].edge_label, fake_lbl], dim=0)
+
+    # Inject auxiliary edges at t_fake
+    for rel_k in [
+        ("user", "uses_device", "device"),
+        ("user", "uses_ip", "ip"),
+    ]:
+        data_inj[rel_k].edge_index = torch.cat(
+            [data_inj[rel_k].edge_index, torch.tensor([[2], [2]], dtype=torch.long)], dim=1
+        )
+        data_inj[rel_k].edge_time = torch.cat([data_inj[rel_k].edge_time, fake_t], dim=0)
+
+    loader_inj = CausalLinkNeighborLoader(
+        data=data_inj,
+        num_neighbors=[10, 10],
+        edge_label_index=(target_rel, target_edge_index),
+        edge_label=target_label,
+        edge_time=target_time,
+        edge_attr=target_attr,
+        device_index=dev_target,
+        ip_index=ip_target,
+        batch_size=1,
+        shuffle=False,
+        seed=42,
+    )
+    batch_inj = next(iter(loader_inj))
+
+    with torch.no_grad():
+        out_inj = model(
+            x_dict={nt: batch_inj[nt].x for nt in batch_inj.node_types},
+            edge_index_dict={et: batch_inj[et].edge_index for et in batch_inj.edge_types},
+            edge_label_index=batch_inj[target_rel].edge_label_index,
+            edge_attr=batch_inj[target_rel].edge_attr,
+            device_index=batch_inj[target_rel].device_index,
+            ip_index=batch_inj[target_rel].ip_index,
+        )
+
+    # 3. Assertions: Bit-identical indices, node representations, and model output
+    assert torch.equal(
+        batch_clean[target_rel].device_index, batch_inj[target_rel].device_index
+    ), "Target transaction device_index changed after future injection!"
+    assert torch.equal(
+        batch_clean[target_rel].ip_index, batch_inj[target_rel].ip_index
+    ), "Target transaction ip_index changed after future injection!"
+
+    for nt in ["device", "ip", "user", "merchant"]:
+        assert torch.equal(batch_clean[nt].n_id, batch_inj[nt].n_id), f"{nt} node IDs differ!"
+        assert torch.equal(batch_clean[nt].x, batch_inj[nt].x), f"{nt} node features differ!"
+
+    assert torch.equal(out_clean, out_inj), (
+        f"Model fraud logit changed after future injection with device/IP binding: "
+        f"{out_clean.item():.6f} vs {out_inj.item():.6f}"
+    )

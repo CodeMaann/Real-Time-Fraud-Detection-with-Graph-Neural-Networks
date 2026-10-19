@@ -23,6 +23,7 @@ import argparse
 import time
 from typing import Any
 
+import mlflow
 import numpy as np
 import pandas as pd
 import xgboost as xgb
@@ -226,19 +227,55 @@ def train_and_eval_label_free_xgb(config_path: str = "configs/baseline.yaml") ->
         default_fraud_amount=config.cost.default_fraud_amount,
         threshold_override=val_threshold,
         fraud_types=test_fraud_types,
+        compute_ci=True,
     )
+
+    # Log to MLflow
+    mlflow.set_tracking_uri("sqlite:///mlflow.db")
+    mlflow.set_experiment("fraud-gnn-baseline")
+    with mlflow.start_run(run_name="xgboost_label_free_graph") as run:
+        mlflow.log_params(
+            {
+                "model_type": "xgboost_label_free_graph",
+                "n_estimators": config.model.n_estimators,
+                "max_depth": config.model.max_depth,
+                "learning_rate": config.model.learning_rate,
+                "scale_pos_weight": scale_pos_weight,
+                "causal": True,
+            }
+        )
+        mlflow.log_metrics(
+            {
+                "test_pr_auc": test_eval.pr_auc,
+                "test_pr_auc_ci_lower": test_eval.pr_auc_ci_lower,
+                "test_pr_auc_ci_upper": test_eval.pr_auc_ci_upper,
+                "test_roc_auc": test_eval.roc_auc,
+                "test_f1": test_eval.f1,
+                "test_recall_at_1pct_fpr": test_eval.recall_at_1pct_fpr,
+                "test_business_cost": test_eval.total_cost,
+                "val_selected_threshold": val_threshold,
+                "inference_latency_ms": latency_ms,
+            }
+        )
+        for ft, rec in test_eval.per_type_recall.items():
+            mlflow.log_metric(f"test_recall_{ft}", rec)
+
+        run_id = run.info.run_id
 
     print("\n" + "=" * 70)
     print("  XGBOOST + LABEL-FREE GRAPH FEATURES RESULTS")
     print("=" * 70)
     print(f"Val PR-AUC             : {val_eval.pr_auc:.4f}")
     print(f"Val Selected Threshold : {val_threshold:.4f}")
-    print(f"Test PR-AUC            : {test_eval.pr_auc:.4f}")
+    print(
+        f"Test PR-AUC            : {test_eval.pr_auc:.4f} [95% CI: {test_eval.pr_auc_ci_lower:.4f} - {test_eval.pr_auc_ci_upper:.4f}]"
+    )
     print(f"Test ROC-AUC           : {test_eval.roc_auc:.4f}")
     print(f"Test Recall @ 1% FPR   : {test_eval.recall_at_1pct_fpr:.4f}")
     print(f"Test F1 @ Val Thresh   : {test_eval.f1:.4f}")
     print(f"Test Business Cost     : ${test_eval.total_cost:,.2f}")
     print(f"Inference Latency      : {latency_ms:.6f} ms/sample")
+    print(f"MLflow Run ID          : {run_id}")
     print("-" * 70)
     print("Per-Fraud-Type Test Recall:")
     for ft, rec in sorted(test_eval.per_type_recall.items()):
@@ -247,7 +284,10 @@ def train_and_eval_label_free_xgb(config_path: str = "configs/baseline.yaml") ->
 
     return {
         "model_name": "XGBoost + Label-Free Graph Features",
+        "run_id": run_id,
         "pr_auc": test_eval.pr_auc,
+        "pr_auc_ci_lower": test_eval.pr_auc_ci_lower,
+        "pr_auc_ci_upper": test_eval.pr_auc_ci_upper,
         "roc_auc": test_eval.roc_auc,
         "recall_1pct_fpr": test_eval.recall_at_1pct_fpr,
         "f1": test_eval.f1,

@@ -88,6 +88,10 @@ def train_epoch(
             edge_label = batch[target_rel].edge_label.to(device)
             raw_attr = getattr(batch[target_rel], "edge_attr", None)
             edge_attr = raw_attr.to(device) if raw_attr is not None else None
+            raw_dev = getattr(batch[target_rel], "device_index", None)
+            dev_idx = raw_dev.to(device) if raw_dev is not None else None
+            raw_ip = getattr(batch[target_rel], "ip_index", None)
+            ip_idx = raw_ip.to(device) if raw_ip is not None else None
 
             x_dict = {nt: batch[nt].x.to(device) for nt in batch.node_types}
             edge_index_dict = {et: batch[et].edge_index.to(device) for et in batch.edge_types}
@@ -97,6 +101,8 @@ def train_epoch(
                 edge_index_dict=edge_index_dict,
                 edge_label_index=edge_label_index,
                 edge_attr=edge_attr,
+                device_index=dev_idx,
+                ip_index=ip_idx,
             )
         else:
             assert isinstance(batch, Data)
@@ -160,6 +166,10 @@ def evaluate_model(
             edge_label = batch[target_rel].edge_label
             raw_attr = getattr(batch[target_rel], "edge_attr", None)
             edge_attr = raw_attr.to(device) if raw_attr is not None else None
+            raw_dev = getattr(batch[target_rel], "device_index", None)
+            dev_idx = raw_dev.to(device) if raw_dev is not None else None
+            raw_ip = getattr(batch[target_rel], "ip_index", None)
+            ip_idx = raw_ip.to(device) if raw_ip is not None else None
 
             x_dict = {nt: batch[nt].x.to(device) for nt in batch.node_types}
             edge_index_dict = {et: batch[et].edge_index.to(device) for et in batch.edge_types}
@@ -169,6 +179,8 @@ def evaluate_model(
                 edge_index_dict=edge_index_dict,
                 edge_label_index=edge_label_index,
                 edge_attr=edge_attr,
+                device_index=dev_idx,
+                ip_index=ip_idx,
             )
         else:
             assert isinstance(batch, Data)
@@ -208,6 +220,7 @@ def train_and_evaluate_gnn(
     override_conv_type: str | None = None,
     override_patience: int | None = None,
     causal: bool = False,
+    override_use_device_ip: bool | None = None,
 ) -> dict[str, Any]:
     """Train GNN model, perform early stopping on validation PR-AUC, and evaluate on test set.
 
@@ -220,6 +233,7 @@ def train_and_evaluate_gnn(
         override_conv_type: Optional convolution type override ('gat', 'sum', 'pna', 'sage').
         override_patience: Optional early-stopping patience override.
         causal: Whether to enforce strict causal temporal sampling (no future leakage).
+        override_use_device_ip: Optional flag to toggle device/ip embedding decoder binding.
 
     Returns:
         Dictionary of final test and validation metrics.
@@ -231,6 +245,11 @@ def train_and_evaluate_gnn(
         override_use_edge_attr
         if override_use_edge_attr is not None
         else config.model.use_edge_attr
+    )
+    use_device_ip = (
+        override_use_device_ip
+        if override_use_device_ip is not None
+        else getattr(config.model, "use_device_ip", True)
     )
     num_hops = override_num_hops if override_num_hops is not None else config.model.num_layers
     epochs = override_epochs if override_epochs is not None else config.training.epochs
@@ -327,18 +346,56 @@ def train_and_evaluate_gnn(
     test_amounts = df_test["amount"].to_numpy()
     test_fraud_types = df_test["fraud_type"].to_numpy()
 
+    # Device and IP indices extraction
+    tr_device_index = (
+        train_graph[target_rel].device_index
+        if hasattr(train_graph[target_rel], "device_index") and train_graph[target_rel].device_index is not None
+        else train_graph["user", "uses_device", "device"].edge_index[1]
+    )
+    tr_ip_index = (
+        train_graph[target_rel].ip_index
+        if hasattr(train_graph[target_rel], "ip_index") and train_graph[target_rel].ip_index is not None
+        else train_graph["user", "uses_ip", "ip"].edge_index[1]
+    )
+
+    val_device_index = (
+        val_graph[target_rel].device_index[val_mask]
+        if hasattr(val_graph[target_rel], "device_index") and val_graph[target_rel].device_index is not None
+        else val_graph["user", "uses_device", "device"].edge_index[1][val_mask]
+    )
+    val_ip_index = (
+        val_graph[target_rel].ip_index[val_mask]
+        if hasattr(val_graph[target_rel], "ip_index") and val_graph[target_rel].ip_index is not None
+        else val_graph["user", "uses_ip", "ip"].edge_index[1][val_mask]
+    )
+
+    test_device_index = (
+        test_graph[target_rel].device_index[test_mask]
+        if hasattr(test_graph[target_rel], "device_index") and test_graph[target_rel].device_index is not None
+        else test_graph["user", "uses_device", "device"].edge_index[1][test_mask]
+    )
+    test_ip_index = (
+        test_graph[target_rel].ip_index[test_mask]
+        if hasattr(test_graph[target_rel], "ip_index") and test_graph[target_rel].ip_index is not None
+        else test_graph["user", "uses_ip", "ip"].edge_index[1][test_mask]
+    )
+
     if subset_fraction is not None and 0.0 < subset_fraction < 1.0:
         n_tr_sub = max(100, int(tr_edge_index.size(1) * subset_fraction))
         tr_edge_index = tr_edge_index[:, :n_tr_sub]
         tr_edge_label = tr_edge_label[:n_tr_sub]
         tr_edge_attr = tr_edge_attr[:n_tr_sub]
         tr_edge_time = tr_edge_time[:n_tr_sub]
+        tr_device_index = tr_device_index[:n_tr_sub]
+        tr_ip_index = tr_ip_index[:n_tr_sub]
 
         n_val_sub = max(50, int(val_edge_index.size(1) * subset_fraction))
         val_edge_index = val_edge_index[:, :n_val_sub]
         val_edge_label = val_edge_label[:n_val_sub]
         val_edge_attr = val_edge_attr[:n_val_sub]
         val_edge_time = val_edge_time[:n_val_sub]
+        val_device_index = val_device_index[:n_val_sub]
+        val_ip_index = val_ip_index[:n_val_sub]
         val_amounts = val_amounts[:n_val_sub]
         val_fraud_types = val_fraud_types[:n_val_sub]
 
@@ -347,6 +404,8 @@ def train_and_evaluate_gnn(
         test_edge_label = test_edge_label[:n_te_sub]
         test_edge_attr = test_edge_attr[:n_te_sub]
         test_edge_time = test_edge_time[:n_te_sub]
+        test_device_index = test_device_index[:n_te_sub]
+        test_ip_index = test_ip_index[:n_te_sub]
         test_amounts = test_amounts[:n_te_sub]
         test_fraud_types = test_fraud_types[:n_te_sub]
         print(
@@ -370,6 +429,8 @@ def train_and_evaluate_gnn(
                 edge_label=tr_edge_label,
                 edge_time=tr_edge_time,
                 edge_attr=tr_edge_attr if use_edge_attr else None,
+                device_index=tr_device_index if use_device_ip else None,
+                ip_index=tr_ip_index if use_device_ip else None,
                 batch_size=batch_size,
                 shuffle=True,
                 seed=config.training.seed,
@@ -381,6 +442,8 @@ def train_and_evaluate_gnn(
                 edge_label=val_edge_label,
                 edge_time=val_edge_time,
                 edge_attr=val_edge_attr if use_edge_attr else None,
+                device_index=val_device_index if use_device_ip else None,
+                ip_index=val_ip_index if use_device_ip else None,
                 batch_size=batch_size,
                 shuffle=False,
                 seed=config.training.seed,
@@ -392,6 +455,8 @@ def train_and_evaluate_gnn(
                 edge_label=test_edge_label,
                 edge_time=test_edge_time,
                 edge_attr=test_edge_attr if use_edge_attr else None,
+                device_index=test_device_index if use_device_ip else None,
+                ip_index=test_ip_index if use_device_ip else None,
                 batch_size=batch_size,
                 shuffle=False,
                 seed=config.training.seed,
@@ -443,6 +508,7 @@ def train_and_evaluate_gnn(
             dropout=config.model.dropout,
             conv_type=conv_type,
             use_edge_attr=use_edge_attr,
+            use_device_ip=use_device_ip,
         ).to(device)
 
     else:
@@ -602,6 +668,8 @@ def train_and_evaluate_gnn(
                 "hidden_dim": config.model.hidden_dim,
                 "num_layers": num_hops,
                 "use_edge_attr": use_edge_attr,
+                "use_device_ip": use_device_ip,
+                "epochs": epochs,
                 "batch_size": batch_size,
                 "learning_rate": config.training.learning_rate,
                 "loss_type": config.training.loss_type,
@@ -718,18 +786,22 @@ def train_and_evaluate_gnn(
             default_fraud_amount=config.cost.default_fraud_amount,
             threshold_override=val_selected_threshold,
             fraud_types=test_fraud_types,
+            compute_ci=True,
         )
 
         # Log final metrics to MLflow
         mlflow.log_metrics(
             {
                 "test_pr_auc": test_eval.pr_auc,
+                "test_pr_auc_ci_lower": test_eval.pr_auc_ci_lower,
+                "test_pr_auc_ci_upper": test_eval.pr_auc_ci_upper,
                 "test_roc_auc": test_eval.roc_auc,
                 "test_f1": test_eval.f1,
                 "test_recall_at_1pct_fpr": test_eval.recall_at_1pct_fpr,
                 "test_business_cost": test_eval.total_cost,
                 "val_selected_threshold": val_selected_threshold,
                 "latency_ms_per_sample": latency_ms_per_sample,
+                "epochs_trained": float(actual_epochs_run),
             }
         )
         for ft, rec in test_eval.per_type_recall.items():
@@ -744,7 +816,10 @@ def train_and_evaluate_gnn(
         print(f"Validation PR-AUC (Primary) : {val_eval.pr_auc:.4f}", flush=True)
         print(f"Validation Selected Thresh  : {val_selected_threshold:.4f}", flush=True)
         print("-" * 70, flush=True)
-        print(f"TEST PR-AUC (Primary)       : {test_eval.pr_auc:.4f}", flush=True)
+        print(
+            f"TEST PR-AUC (Primary)       : {test_eval.pr_auc:.4f} [95% CI: {test_eval.pr_auc_ci_lower:.4f} - {test_eval.pr_auc_ci_upper:.4f}]",
+            flush=True,
+        )
         print(f"TEST ROC-AUC                : {test_eval.roc_auc:.4f}", flush=True)
         print(f"TEST Recall @ 1% FPR        : {test_eval.recall_at_1pct_fpr:.4f}", flush=True)
         print(f"TEST F1 @ Val Threshold     : {test_eval.f1:.4f}", flush=True)
@@ -817,6 +892,11 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Override early stopping patience",
     )
+    parser.add_argument(
+        "--no-device-ip",
+        action="store_true",
+        help="Ablation: Disable device and IP node binding in decoder",
+    )
     args = parser.parse_args(argv)
 
     config = load_gnn_config(args.config)
@@ -829,6 +909,7 @@ def main(argv: list[str] | None = None) -> int:
         override_conv_type=args.conv_type,
         override_patience=args.patience,
         causal=args.causal,
+        override_use_device_ip=False if args.no_device_ip else None,
     )
     return 0
 

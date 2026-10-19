@@ -206,6 +206,8 @@ class CausalLinkNeighborLoader:
         edge_label: torch.Tensor,
         edge_time: torch.Tensor,
         edge_attr: torch.Tensor | None = None,
+        device_index: torch.Tensor | None = None,
+        ip_index: torch.Tensor | None = None,
         batch_size: int = 512,
         shuffle: bool = True,
         seed: int | None = 42,
@@ -237,6 +239,36 @@ class CausalLinkNeighborLoader:
         self.edge_time = edge_time
         self.edge_attr = edge_attr
         self.num_edges = self.target_edge_index.size(1)
+
+        # Target transaction device and ip indices (if present)
+        target_store = data[self.target_edge_type]
+        if device_index is not None:
+            self.device_index: np.ndarray | None = device_index.cpu().numpy()
+        elif hasattr(target_store, "device_index") and target_store.device_index is not None:
+            self.device_index = target_store.device_index.cpu().numpy()
+        elif (
+            ("user", "uses_device", "device") in data.edge_types
+            and data["user", "uses_device", "device"].edge_index.size(1) >= self.num_edges
+        ):
+            self.device_index = (
+                data["user", "uses_device", "device"].edge_index[1][: self.num_edges].cpu().numpy()
+            )
+        else:
+            self.device_index = None
+
+        if ip_index is not None:
+            self.ip_index: np.ndarray | None = ip_index.cpu().numpy()
+        elif hasattr(target_store, "ip_index") and target_store.ip_index is not None:
+            self.ip_index = target_store.ip_index.cpu().numpy()
+        elif (
+            ("user", "uses_ip", "ip") in data.edge_types
+            and data["user", "uses_ip", "ip"].edge_index.size(1) >= self.num_edges
+        ):
+            self.ip_index = (
+                data["user", "uses_ip", "ip"].edge_index[1][: self.num_edges].cpu().numpy()
+            )
+        else:
+            self.ip_index = None
 
         # Build temporal CSR index for all relational edges
         self.adj_dict: dict[tuple[str, str, str], FastTemporalAdjacency] = {}
@@ -283,11 +315,17 @@ class CausalLinkNeighborLoader:
             b_labels = labels_all[batch_indices]
             b_times = times_all[batch_indices]
             b_attr = attr_all[batch_indices] if attr_all is not None else None
+            b_dev = self.device_index[batch_indices] if self.device_index is not None else None
+            b_ip = self.ip_index[batch_indices] if self.ip_index is not None else None
 
             # 1. Multi-hop causal neighborhood expansion
             sampled_nodes: dict[str, set[int]] = {nt: set() for nt in self.data.node_types}
             sampled_nodes[src_t].update(b_src)
             sampled_nodes[dst_t].update(b_dst)
+            if b_dev is not None and "device" in sampled_nodes:
+                sampled_nodes["device"].update(b_dev)
+            if b_ip is not None and "ip" in sampled_nodes:
+                sampled_nodes["ip"].update(b_ip)
 
             sampled_eids: dict[tuple[str, str, str], list[np.ndarray]] = {
                 et: [] for et in self.data.edge_types
@@ -304,11 +342,25 @@ class CausalLinkNeighborLoader:
             for v_id, t_cut in zip(b_dst, b_times, strict=False):
                 if v_id not in node_cutoffs[dst_t] or t_cut < node_cutoffs[dst_t][v_id]:
                     node_cutoffs[dst_t][int(v_id)] = int(t_cut)
+            if b_dev is not None and "device" in node_cutoffs:
+                for d_id, t_cut in zip(b_dev, b_times, strict=False):
+                    if d_id not in node_cutoffs["device"] or t_cut < node_cutoffs["device"][d_id]:
+                        node_cutoffs["device"][int(d_id)] = int(t_cut)
+            if b_ip is not None and "ip" in node_cutoffs:
+                for ip_id, t_cut in zip(b_ip, b_times, strict=False):
+                    if ip_id not in node_cutoffs["ip"] or t_cut < node_cutoffs["ip"][ip_id]:
+                        node_cutoffs["ip"][int(ip_id)] = int(t_cut)
 
             frontier_nodes[src_t].extend(b_src.tolist())
             frontier_times[src_t].extend(b_times.tolist())
             frontier_nodes[dst_t].extend(b_dst.tolist())
             frontier_times[dst_t].extend(b_times.tolist())
+            if b_dev is not None and "device" in frontier_nodes:
+                frontier_nodes["device"].extend(b_dev.tolist())
+                frontier_times["device"].extend(b_times.tolist())
+            if b_ip is not None and "ip" in frontier_nodes:
+                frontier_nodes["ip"].extend(b_ip.tolist())
+                frontier_times["ip"].extend(b_times.tolist())
 
             for hop_k in range(len(self.num_neighbors)):
                 k_limit = self.num_neighbors[hop_k]
@@ -450,6 +502,12 @@ class CausalLinkNeighborLoader:
                 batch[self.target_edge_type].edge_attr = torch.from_numpy(b_attr).to(
                     dtype=torch.float32
                 )
+            if b_dev is not None and "device" in global_to_local:
+                local_dev = np.array([global_to_local["device"][d] for d in b_dev], dtype=np.int64)
+                batch[self.target_edge_type].device_index = torch.from_numpy(local_dev)
+            if b_ip is not None and "ip" in global_to_local:
+                local_ip = np.array([global_to_local["ip"][i] for i in b_ip], dtype=np.int64)
+                batch[self.target_edge_type].ip_index = torch.from_numpy(local_ip)
             batch[self.target_edge_type].batch_size = len(batch_indices)
 
             yield batch

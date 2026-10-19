@@ -18,6 +18,7 @@ import time
 os.environ["MLFLOW_ALLOW_FILE_STORE"] = "true"
 os.environ["MLFLOW_DISABLE_AGENT_HINT"] = "1"
 
+import mlflow
 import numpy as np
 import pandas as pd
 import xgboost as xgb
@@ -259,7 +260,11 @@ def main() -> int:
 
     # Evaluate test set strictly using the validation threshold
     val_thresh = val_metrics.best_threshold
+    t0_score = time.perf_counter()
     y_test_prob = model.predict_proba(X_test)[:, 1]
+    score_elapsed = time.perf_counter() - t0_score
+    latency_ms = (score_elapsed / max(1, len(y_test_prob))) * 1000.0
+
     test_metrics = compute_metrics(
         y_true=y_test.to_numpy(),
         y_pred_proba=y_test_prob,
@@ -268,7 +273,40 @@ def main() -> int:
         default_fraud_amount=config.cost.default_fraud_amount,
         threshold_override=val_thresh,
         fraud_types=test_df["fraud_type"].to_numpy(),
+        compute_ci=True,
     )
+
+    # Log to MLflow
+    mlflow.set_tracking_uri("sqlite:///mlflow.db")
+    mlflow.set_experiment("fraud-gnn-baseline")
+    with mlflow.start_run(run_name="xgboost_label_graph_oracle") as run:
+        mlflow.log_params(
+            {
+                "model_type": "xgboost_label_graph_oracle",
+                "n_estimators": config.model.n_estimators,
+                "max_depth": config.model.max_depth,
+                "learning_rate": config.model.learning_rate,
+                "scale_pos_weight": spw,
+                "causal": True,
+            }
+        )
+        mlflow.log_metrics(
+            {
+                "test_pr_auc": test_metrics.pr_auc,
+                "test_pr_auc_ci_lower": test_metrics.pr_auc_ci_lower,
+                "test_pr_auc_ci_upper": test_metrics.pr_auc_ci_upper,
+                "test_roc_auc": test_metrics.roc_auc,
+                "test_f1": test_metrics.f1,
+                "test_recall_at_1pct_fpr": test_metrics.recall_at_1pct_fpr,
+                "test_business_cost": test_metrics.total_cost,
+                "val_selected_threshold": val_thresh,
+                "inference_latency_ms": latency_ms,
+            }
+        )
+        for ft, rec in test_metrics.per_type_recall.items():
+            mlflow.log_metric(f"test_recall_{ft}", rec)
+
+        run_id = run.info.run_id
 
     # Top Feature Importance (Gain)
     raw_scores = model.get_booster().get_score(importance_type="gain")
@@ -291,7 +329,9 @@ def main() -> int:
     print(f"Validation Recall @ 1% FPR   : {val_metrics.recall_at_1pct_fpr:.4f}")
     print(f"Validation Best Threshold    : {val_metrics.best_threshold:.4f}")
     print("-" * 70)
-    print(f"TEST PR-AUC (Primary)        : {test_metrics.pr_auc:.4f}")
+    print(
+        f"TEST PR-AUC (Primary)        : {test_metrics.pr_auc:.4f} [95% CI: {test_metrics.pr_auc_ci_lower:.4f} - {test_metrics.pr_auc_ci_upper:.4f}]"
+    )
     print(f"TEST ROC-AUC                 : {test_metrics.roc_auc:.4f}")
     print(f"TEST Recall @ 1% FPR         : {test_metrics.recall_at_1pct_fpr:.4f}")
     print(f"TEST F1 @ Val Threshold      : {test_metrics.f1:.4f}")
@@ -299,6 +339,8 @@ def main() -> int:
         f"TEST Confusion Matrix        : TN={test_metrics.tn:,}, FP={test_metrics.fp:,}, FN={test_metrics.fn:,}, TP={test_metrics.tp:,}"
     )
     print(f"TEST Business Cost           : ${test_metrics.total_cost:,.2f}")
+    print(f"Inference Latency            : {latency_ms:.6f} ms/sample")
+    print(f"MLflow Run ID                : {run_id}")
 
     print("\n" + "-" * 70)
     print(f"  PER-FRAUD-TYPE RECALL @ Val Threshold = {val_thresh:.4f}")

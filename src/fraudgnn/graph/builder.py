@@ -276,6 +276,8 @@ def build_hetero_data(
     data["user", "transacts_at", "merchant"].edge_attr = computed_attrs
     data["user", "transacts_at", "merchant"].edge_label = edge_labels
     data["user", "transacts_at", "merchant"].edge_time = edge_times
+    data["user", "transacts_at", "merchant"].device_index = device_indices
+    data["user", "transacts_at", "merchant"].ip_index = ip_indices
 
     # Reverse transaction edge for bidirectional message passing
     rev_tx_edge_index = torch.stack([merchant_indices, user_indices], dim=0)

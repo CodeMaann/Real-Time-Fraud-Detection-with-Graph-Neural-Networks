@@ -46,6 +46,8 @@ class EvaluationMetrics:
     review_cost: float
     avg_fraud_amount: float
     per_type_recall: dict[str, float] = field(default_factory=dict)
+    pr_auc_ci_lower: float = 0.0
+    pr_auc_ci_upper: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         """Convert metrics to dictionary for logging and serialization."""
@@ -61,6 +63,7 @@ def compute_metrics(
     threshold_steps: int = 100,
     threshold_override: float | None = None,
     fraud_types: np.ndarray | None = None,
+    compute_ci: bool = False,
 ) -> EvaluationMetrics:
     """Compute primary and secondary fraud detection metrics including business cost.
 
@@ -166,19 +169,25 @@ def compute_metrics(
             min_cost = cost_val
             min_cost_thresh = float(thresh)
 
-    # 8. Per-fraud-type recall at operating threshold
+    # 8. Per-fraud-type recall at operating threshold (strictly on is_fraud == 1 positives)
     per_type_recall: dict[str, float] = {}
     if fraud_types is not None and len(fraud_types) == len(y_true):
         fraud_type_arr = np.asarray(fraud_types)
         unique_types = sorted(set(fraud_type_arr[y_true == 1].tolist()) - {"legitimate"})
         for ft in unique_types:
-            ft_mask = fraud_type_arr == ft
+            ft_mask = (fraud_type_arr == ft) & (y_true == 1)
             n_total = int(ft_mask.sum())
             if n_total > 0:
-                n_caught = int(y_pred_best[ft_mask].sum())
+                n_caught = int(((y_pred_best == 1) & ft_mask).sum())
                 per_type_recall[ft] = float(n_caught / n_total)
             else:
                 per_type_recall[ft] = 0.0
+
+    # 9. Optional 95% Bootstrap Confidence Interval for PR-AUC
+    if compute_ci:
+        ci_lower, ci_upper = compute_pr_auc_bootstrap_ci(y_true, y_pred_proba)
+    else:
+        ci_lower, ci_upper = pr_auc, pr_auc
 
     return EvaluationMetrics(
         pr_auc=pr_auc,
@@ -197,7 +206,49 @@ def compute_metrics(
         review_cost=review_cost,
         avg_fraud_amount=avg_fraud_amt,
         per_type_recall=per_type_recall,
+        pr_auc_ci_lower=ci_lower,
+        pr_auc_ci_upper=ci_upper,
     )
+
+
+def compute_pr_auc_bootstrap_ci(
+    y_true: np.ndarray,
+    y_pred_proba: np.ndarray,
+    n_bootstraps: int = 500,
+    alpha: float = 0.05,
+    seed: int = 42,
+) -> tuple[float, float]:
+    """Compute (1 - alpha) bootstrap confidence interval for PR-AUC.
+
+    Args:
+        y_true: Binary ground truth labels.
+        y_pred_proba: Predicted fraud probabilities.
+        n_bootstraps: Number of bootstrap iterations.
+        alpha: Significance level (default 0.05 for 95% CI).
+        seed: Random seed.
+
+    Returns:
+        Tuple of (ci_lower, ci_upper).
+    """
+    rng = np.random.default_rng(seed)
+    n = len(y_true)
+    pr_aucs: list[float] = []
+
+    for _ in range(n_bootstraps):
+        idx = rng.integers(0, n, size=n)
+        sub_y = y_true[idx]
+        if sub_y.sum() == 0:
+            continue
+        pr_aucs.append(float(average_precision_score(sub_y, y_pred_proba[idx])))
+
+    if not pr_aucs:
+        base = float(average_precision_score(y_true, y_pred_proba))
+        return base, base
+
+    arr = np.array(pr_aucs)
+    lower_p = 100.0 * (alpha / 2.0)
+    upper_p = 100.0 * (1.0 - alpha / 2.0)
+    return float(np.percentile(arr, lower_p)), float(np.percentile(arr, upper_p))
 
 
 def plot_pr_curve(

@@ -50,6 +50,8 @@ class EdgeDecoder(nn.Module):
         src_emb: torch.Tensor,
         dst_emb: torch.Tensor,
         edge_attr: torch.Tensor | None = None,
+        dev_emb: torch.Tensor | None = None,
+        ip_emb: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Forward pass through edge classification MLP.
 
@@ -57,11 +59,19 @@ class EdgeDecoder(nn.Module):
             src_emb: Source node representations of shape [E, D].
             dst_emb: Destination node representations of shape [E, D].
             edge_attr: Optional edge attributes of shape [E, edge_dim].
+            dev_emb: Optional device node representations of shape [E, D].
+            ip_emb: Optional IP node representations of shape [E, D].
 
         Returns:
             Raw fraud prediction logits of shape [E].
         """
-        features = [src_emb, dst_emb, edge_attr] if edge_attr is not None else [src_emb, dst_emb]
+        features = [src_emb, dst_emb]
+        if dev_emb is not None:
+            features.append(dev_emb)
+        if ip_emb is not None:
+            features.append(ip_emb)
+        if edge_attr is not None:
+            features.append(edge_attr)
 
         cat_emb = torch.cat(features, dim=-1)
         logits: torch.Tensor = self.mlp(cat_emb).squeeze(-1)
@@ -100,6 +110,7 @@ class HeteroGAT(nn.Module):
         dropout: float = 0.2,
         conv_type: str = "gat",
         use_edge_attr: bool = True,
+        use_device_ip: bool = True,
         target_edge_type: tuple[str, str, str] = ("user", "transacts_at", "merchant"),
     ) -> None:
         super().__init__()
@@ -110,6 +121,7 @@ class HeteroGAT(nn.Module):
         self.num_layers = num_layers
         self.conv_type = conv_type.lower()
         self.use_edge_attr = use_edge_attr
+        self.use_device_ip = use_device_ip
         self.target_edge_type = target_edge_type
 
         # 1. Per-node-type input projections
@@ -168,7 +180,8 @@ class HeteroGAT(nn.Module):
             self.layer_norms.append(norm_dict)
 
         # 3. Edge classification decoder
-        decoder_in_dim = 2 * hidden_channels + (edge_dim if use_edge_attr else 0)
+        num_node_embs = 4 if use_device_ip else 2
+        decoder_in_dim = num_node_embs * hidden_channels + (edge_dim if use_edge_attr else 0)
         self.decoder = EdgeDecoder(
             in_dim=decoder_in_dim,
             hidden_dim=hidden_channels,
@@ -181,6 +194,8 @@ class HeteroGAT(nn.Module):
         edge_index_dict: dict[tuple[str, str, str], torch.Tensor],
         edge_label_index: torch.Tensor,
         edge_attr: torch.Tensor | None = None,
+        device_index: torch.Tensor | None = None,
+        ip_index: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Forward pass for heterogeneous edge classification.
 
@@ -190,6 +205,8 @@ class HeteroGAT(nn.Module):
             edge_label_index: Tensor of shape [2, E] containing source and target node
                 indices for the target edges to classify.
             edge_attr: Optional tensor of shape [E, edge_dim] with transaction attributes.
+            device_index: Optional tensor of shape [E] containing device node indices.
+            ip_index: Optional tensor of shape [E] containing IP node indices.
 
         Returns:
             Logits of shape [E] predicting fraud for each edge in edge_label_index.
@@ -226,6 +243,21 @@ class HeteroGAT(nn.Module):
         src_emb = h_dict[src_type][src_nodes]
         dst_emb = h_dict[dst_type][dst_nodes]
 
+        dev_emb = None
+        ip_emb = None
+        if self.use_device_ip:
+            if device_index is not None and "device" in h_dict:
+                dev_emb = h_dict["device"][device_index]
+            else:
+                dev_emb = torch.zeros_like(src_emb)
+
+            if ip_index is not None and "ip" in h_dict:
+                ip_emb = h_dict["ip"][ip_index]
+            else:
+                ip_emb = torch.zeros_like(src_emb)
+
         attr = edge_attr if self.use_edge_attr else None
-        logits: torch.Tensor = self.decoder(src_emb, dst_emb, edge_attr=attr)
+        logits: torch.Tensor = self.decoder(
+            src_emb, dst_emb, edge_attr=attr, dev_emb=dev_emb, ip_emb=ip_emb
+        )
         return logits

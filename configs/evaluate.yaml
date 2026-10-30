@@ -1,0 +1,76 @@
+# ── Unified re-scoring configuration (scripts/evaluate_unified.py) ─────
+# Re-scores saved checkpoints (no training). Results are logged to the original MLflow run
+# under rescored_* keys; the metrics logged at training time are never modified.
+
+tracking_uri: sqlite:///mlflow.db
+baseline_config: configs/baseline.yaml   # data path, split ratios and cost model
+processed_dir: data/processed
+predictions_out: data/processed/eval_predictions.npz
+thresholds_out: data/processed/eval_thresholds.json
+
+models:
+  - key: xgb_tab
+    name: XGBoost (Tabular Baseline)
+    run_id: efa4ea293a6b4226b26eac7e62d972b6
+    kind: xgb_tabular
+    checkpoint: models/xgboost_baseline.json
+
+  - key: mlp
+    name: Plain MLP (Edge Features Only)
+    run_id: 6c0a0d5625de4e81a4697ba0e73f6897
+    kind: logged_only          # no checkpoint was saved for this run
+
+  - key: xgb_lf
+    name: XGBoost + Label-Free Graph Features
+    run_id: 9834e7c546ad4da3b49c2cb12715300f
+    kind: xgb_label_free
+    checkpoint: models/xgboost_label_free.json   # not a run artifact: provenance unverified
+
+  - key: xgb_oracle
+    name: XGBoost + Hand-Made Graph Features (Oracle, uses past labels)
+    run_id: c6ab22d40a7e452d990c8a75f57cb6aa
+    kind: logged_only          # no checkpoint was saved for this run
+
+  - key: sage_causal
+    name: GraphSAGE (Homogeneous, Causal)
+    run_id: 915e5aa05bb24e66bce4009533bb9580
+    kind: graphsage
+    checkpoint: models/best_graphsage_causal.pt
+    gnn_config: configs/sage.yaml
+
+  - key: gat_nobind
+    name: HeteroGAT (PNA, Causal, Without Device/IP Binding)
+    run_id: 41a97273a0874fe9980a0bb0dfd273b7
+    kind: hetero_gat
+    checkpoint: models/best_hetero_sum_pna_causal.pt
+    gnn_config: configs/hetero_sum.yaml
+    conv_type: pna
+    use_device_ip: false
+    training_log: train_pna.log   # console log of this run (training-time test metrics)
+
+  - key: gat_bind
+    name: HeteroGAT (PNA, Causal, With Device/IP Binding)
+    run_id: f1303c5a5e2549b38704bb8bbbcdd028
+    kind: hetero_gat
+    checkpoint: models/best_hetero_gat_pna_causal.pt
+    gnn_config: configs/hetero_gat.yaml
+    conv_type: pna
+    use_device_ip: true
+
+# Runs whose training-time test metrics were overwritten in place on 2026-10-19 by the
+# removed raw-SQL "Synchronize MLflow Database" block of commit 76981a5. Their test_* metrics
+# in MLflow are re-scores (GNNs with num_neighbors [15, 10]), not training-time values.
+sql_sync_overwritten_runs:
+  - efa4ea293a6b4226b26eac7e62d972b6
+  - 9834e7c546ad4da3b49c2cb12715300f
+  - 915e5aa05bb24e66bce4009533bb9580
+  - 41a97273a0874fe9980a0bb0dfd273b7
+  - f1303c5a5e2549b38704bb8bbbcdd028
+
+report:
+  output: docs/benchmarks.md
+  readme: README.md            # table is written between <!-- results:start/end --> markers
+  bootstrap_iterations: 500    # paired bootstrap, GNN with binding vs label-free XGBoost
+  bootstrap_seed: 42
+  bootstrap_alpha: 0.05
+  batch_leak_results: data/processed/batch_leak.json   # from scripts/measure_batch_leak.py

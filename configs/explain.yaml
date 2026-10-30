@@ -1,0 +1,28 @@
+# ── Explanation evaluation (scripts/make_explanation_examples.py) ─────
+# Explains random true positives of each model separately (one model per explanation) and
+# runs a deletion-based faithfulness check. Requires scripts/evaluate_unified.py outputs.
+
+eval_config: configs/evaluate.yaml     # checkpoints, predictions and validation thresholds
+output_dir: docs/examples
+results_out: data/processed/explanation_eval.json
+
+seed: 42
+n_per_type: 50              # random true positives per fraud type and model
+top_k: 5                    # attributions computed per explanation
+faithfulness_k: 3           # top attributions removed together in the deletion test
+random_baselines: 5         # random k-subsets per case for the comparison
+max_edge_ablations: 50      # GNN neighbor edges dropped one at a time
+html_examples: true          # one interactive neighborhood page per model and fraud type
+
+fraud_types:
+  - fraud_ring
+  - account_takeover
+  - merchant_collusion
+  - card_testing
+  - mule
+
+models:                     # keys from configs/evaluate.yaml
+  - key: xgb_lf
+    explainer: shap
+  - key: gat_bind
+    explainer: perturbation

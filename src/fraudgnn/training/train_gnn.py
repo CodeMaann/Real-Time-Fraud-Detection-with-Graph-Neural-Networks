@@ -258,11 +258,7 @@ def train_and_evaluate_gnn(
         if override_conv_type is not None
         else config.model.conv_type.lower()
     )
-    patience = (
-        override_patience
-        if override_patience is not None
-        else config.training.patience
-    )
+    patience = override_patience if override_patience is not None else config.training.patience
 
     num_neighbors = (
         [10] * num_hops
@@ -349,34 +345,40 @@ def train_and_evaluate_gnn(
     # Device and IP indices extraction
     tr_device_index = (
         train_graph[target_rel].device_index
-        if hasattr(train_graph[target_rel], "device_index") and train_graph[target_rel].device_index is not None
+        if hasattr(train_graph[target_rel], "device_index")
+        and train_graph[target_rel].device_index is not None
         else train_graph["user", "uses_device", "device"].edge_index[1]
     )
     tr_ip_index = (
         train_graph[target_rel].ip_index
-        if hasattr(train_graph[target_rel], "ip_index") and train_graph[target_rel].ip_index is not None
+        if hasattr(train_graph[target_rel], "ip_index")
+        and train_graph[target_rel].ip_index is not None
         else train_graph["user", "uses_ip", "ip"].edge_index[1]
     )
 
     val_device_index = (
         val_graph[target_rel].device_index[val_mask]
-        if hasattr(val_graph[target_rel], "device_index") and val_graph[target_rel].device_index is not None
+        if hasattr(val_graph[target_rel], "device_index")
+        and val_graph[target_rel].device_index is not None
         else val_graph["user", "uses_device", "device"].edge_index[1][val_mask]
     )
     val_ip_index = (
         val_graph[target_rel].ip_index[val_mask]
-        if hasattr(val_graph[target_rel], "ip_index") and val_graph[target_rel].ip_index is not None
+        if hasattr(val_graph[target_rel], "ip_index")
+        and val_graph[target_rel].ip_index is not None
         else val_graph["user", "uses_ip", "ip"].edge_index[1][val_mask]
     )
 
     test_device_index = (
         test_graph[target_rel].device_index[test_mask]
-        if hasattr(test_graph[target_rel], "device_index") and test_graph[target_rel].device_index is not None
+        if hasattr(test_graph[target_rel], "device_index")
+        and test_graph[target_rel].device_index is not None
         else test_graph["user", "uses_device", "device"].edge_index[1][test_mask]
     )
     test_ip_index = (
         test_graph[target_rel].ip_index[test_mask]
-        if hasattr(test_graph[target_rel], "ip_index") and test_graph[target_rel].ip_index is not None
+        if hasattr(test_graph[target_rel], "ip_index")
+        and test_graph[target_rel].ip_index is not None
         else test_graph["user", "uses_ip", "ip"].edge_index[1][test_mask]
     )
 
@@ -496,7 +498,9 @@ def train_and_evaluate_gnn(
         if causal:
             in_channels_dict = {nt: 17 for nt in train_graph.node_types}
         else:
-            in_channels_dict = {nt: int(train_graph[nt].x.size(1)) for nt in train_graph.node_types}
+            in_channels_dict = {
+                nt: int(train_graph[nt].x.size(1)) for nt in train_graph.node_types
+            }
         model: nn.Module = HeteroGAT(
             node_types=train_graph.node_types,
             edge_types=train_graph.edge_types,
@@ -665,6 +669,8 @@ def train_and_evaluate_gnn(
                 "model_type": config.model.model_type,
                 "conv_type": conv_type,
                 "causal": causal,
+                # Hetero causal loaders isolate each target subgraph (no batch-sharing leak).
+                "isolate_targets": causal and is_hetero,
                 "hidden_dim": config.model.hidden_dim,
                 "num_layers": num_hops,
                 "use_edge_attr": use_edge_attr,

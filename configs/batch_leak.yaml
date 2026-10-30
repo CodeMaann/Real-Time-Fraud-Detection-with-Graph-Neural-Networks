@@ -1,0 +1,16 @@
+# ── Batch-sharing leak measurement (scripts/measure_batch_leak.py) ─────
+# Scores fixed val/test subsets of both HeteroGAT checkpoints at several batch sizes.
+# Batch size 1 is computed with isolate_targets=True (identical to scoring each target alone);
+# larger sizes use the legacy shared-subgraph batches with the same boundaries as a full
+# ordered pass over the split.
+
+eval_config: configs/evaluate.yaml
+models: [gat_nobind, gat_bind]          # keys from configs/evaluate.yaml
+batch_sizes: [1, 16, 128, 2048]
+seed: 42
+negatives_per_split: 20000              # random negatives; all positives are kept
+target_fpr: 0.01                        # threshold chosen on validation subset negatives
+bootstrap_iterations: 500
+bootstrap_alpha: 0.05
+isolated_chunk: 2048                    # targets per forward pass in isolated mode
+results_out: data/processed/batch_leak.json

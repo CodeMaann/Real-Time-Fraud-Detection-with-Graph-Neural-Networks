@@ -497,7 +497,9 @@ def test_device_ip_decoder_future_injection_invariance(
     fake_attr[0, 0] = fake_amount
     fake_lbl = torch.tensor([1], dtype=torch.long)
 
-    data_inj[target_rel].edge_index = torch.cat([data_inj[target_rel].edge_index, fake_edge], dim=1)
+    data_inj[target_rel].edge_index = torch.cat(
+        [data_inj[target_rel].edge_index, fake_edge], dim=1
+    )
     data_inj[target_rel].edge_time = torch.cat([data_inj[target_rel].edge_time, fake_t], dim=0)
     data_inj[target_rel].edge_attr = torch.cat([data_inj[target_rel].edge_attr, fake_attr], dim=0)
     data_inj[target_rel].edge_label = torch.cat([data_inj[target_rel].edge_label, fake_lbl], dim=0)
@@ -538,12 +540,12 @@ def test_device_ip_decoder_future_injection_invariance(
         )
 
     # 3. Assertions: Bit-identical indices, node representations, and model output
-    assert torch.equal(
-        batch_clean[target_rel].device_index, batch_inj[target_rel].device_index
-    ), "Target transaction device_index changed after future injection!"
-    assert torch.equal(
-        batch_clean[target_rel].ip_index, batch_inj[target_rel].ip_index
-    ), "Target transaction ip_index changed after future injection!"
+    assert torch.equal(batch_clean[target_rel].device_index, batch_inj[target_rel].device_index), (
+        "Target transaction device_index changed after future injection!"
+    )
+    assert torch.equal(batch_clean[target_rel].ip_index, batch_inj[target_rel].ip_index), (
+        "Target transaction ip_index changed after future injection!"
+    )
 
     for nt in ["device", "ip", "user", "merchant"]:
         assert torch.equal(batch_clean[nt].n_id, batch_inj[nt].n_id), f"{nt} node IDs differ!"
@@ -553,3 +555,187 @@ def test_device_ip_decoder_future_injection_invariance(
         f"Model fraud logit changed after future injection with device/IP binding: "
         f"{out_clean.item():.6f} vs {out_inj.item():.6f}"
     )
+
+
+def test_device_ip_seeding_requires_explicit_indices(synthetic_temporal_graph: HeteroData) -> None:
+    """Without explicit indices the loader must not infer devices/IPs from graph edges.
+
+    The removed fallback sliced ``uses_device.edge_index[1][:num_targets]``, which is
+    misaligned for masked val/test targets and seeded devices for non-binding models.
+    """
+    data = synthetic_temporal_graph
+    target_rel = ("user", "transacts_at", "merchant")
+    targets = data[target_rel].edge_index[:, 3:5]
+
+    loader = CausalLinkNeighborLoader(
+        data=data,
+        num_neighbors=[10, 10],
+        edge_label_index=(target_rel, targets),
+        edge_label=data[target_rel].edge_label[3:5],
+        edge_time=data[target_rel].edge_time[3:5],
+        batch_size=2,
+        shuffle=False,
+    )
+    assert loader.device_index is None
+    assert loader.ip_index is None
+    batch = next(iter(loader))
+    assert not hasattr(batch[target_rel], "device_index")
+
+    with pytest.raises(ValueError, match="one entry per target edge"):
+        CausalLinkNeighborLoader(
+            data=data,
+            num_neighbors=[10, 10],
+            edge_label_index=(target_rel, targets),
+            edge_label=data[target_rel].edge_label[3:5],
+            edge_time=data[target_rel].edge_time[3:5],
+            device_index=torch.tensor([0]),
+        )
+
+
+def _batched_pair_scores(
+    data: HeteroData, isolate_targets: bool, inject: bool
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Score target A (t=1000) batched with later target B (t=6000) on the same user.
+
+    With ``inject`` a transaction at t=3500 (after A, before B) is added to A's user.
+    Returns (A's logit from the 2-target batch, A's logit scored alone).
+    """
+    target_rel = ("user", "transacts_at", "merchant")
+    rev_rel = ("merchant", "rev_transacts_at", "user")
+    graph = copy.deepcopy(data)
+    if inject:
+        fake_attr = torch.zeros(1, 27)
+        fake_attr[0, 0] = 1_000_000.0
+        for rel in (target_rel, rev_rel):
+            graph[rel].edge_index = torch.cat(
+                [graph[rel].edge_index, torch.tensor([[0], [0]], dtype=torch.long)], dim=1
+            )
+            graph[rel].edge_time = torch.cat(
+                [graph[rel].edge_time, torch.tensor([3500], dtype=torch.long)]
+            )
+            graph[rel].edge_attr = torch.cat([graph[rel].edge_attr, fake_attr], dim=0)
+        graph[target_rel].edge_label = torch.cat(
+            [graph[target_rel].edge_label, torch.tensor([0], dtype=torch.long)]
+        )
+
+    torch.manual_seed(999)
+    model = HeteroGAT(
+        node_types=graph.node_types,
+        edge_types=graph.edge_types,
+        in_channels_dict={nt: 17 for nt in graph.node_types},
+        hidden_channels=32,
+        edge_dim=27,
+        num_layers=2,
+        heads=2,
+        dropout=0.0,
+        conv_type="pna",
+        use_edge_attr=True,
+        use_device_ip=False,
+    )
+    model.eval()
+
+    targets = torch.tensor([[0, 0], [0, 2]], dtype=torch.long)
+    target_times = torch.tensor([1000, 6000], dtype=torch.long)
+
+    def first_logit(batch_size: int) -> torch.Tensor:
+        loader = CausalLinkNeighborLoader(
+            data=graph,
+            num_neighbors=[10, 10],
+            edge_label_index=(target_rel, targets),
+            edge_label=torch.zeros(2),
+            edge_time=target_times,
+            edge_attr=torch.zeros(2, 27),
+            batch_size=batch_size,
+            shuffle=False,
+            isolate_targets=isolate_targets,
+        )
+        batch = next(iter(loader))
+        with torch.no_grad():
+            out = model(
+                x_dict={nt: batch[nt].x for nt in batch.node_types},
+                edge_index_dict={et: batch[et].edge_index for et in batch.edge_types},
+                edge_label_index=batch[target_rel].edge_label_index,
+                edge_attr=batch[target_rel].edge_attr,
+            )
+        return out[0]
+
+    return first_logit(2), first_logit(1)
+
+
+def test_batched_future_injection_leaks_between_targets(
+    synthetic_temporal_graph: HeteroData,
+) -> None:
+    """With isolated targets (default), a later target in the batch cannot leak into A.
+
+    Injecting a transaction after A must leave A's batched score unchanged, and A's batched
+    score must equal its score when scored alone.
+    """
+    clean_batched, clean_alone = _batched_pair_scores(synthetic_temporal_graph, True, False)
+    injected_batched, _ = _batched_pair_scores(synthetic_temporal_graph, True, True)
+    assert torch.equal(clean_batched, injected_batched)
+    assert torch.allclose(clean_batched, clean_alone, atol=1e-6)
+
+
+def test_shared_batches_still_leak(synthetic_temporal_graph: HeteroData) -> None:
+    """Contrast: the legacy shared-subgraph mode is affected by the post-A injection."""
+    clean_batched, clean_alone = _batched_pair_scores(synthetic_temporal_graph, False, False)
+    injected_batched, _ = _batched_pair_scores(synthetic_temporal_graph, False, True)
+    assert not torch.equal(clean_batched, injected_batched)
+    assert not torch.allclose(clean_batched, clean_alone, atol=1e-6)
+
+
+def test_isolated_batches_match_single_target_scoring(
+    synthetic_temporal_graph: HeteroData,
+) -> None:
+    """Every target in an isolated batch scores as if it were scored alone."""
+    data = synthetic_temporal_graph
+    target_rel = ("user", "transacts_at", "merchant")
+    torch.manual_seed(7)
+    model = HeteroGAT(
+        node_types=data.node_types,
+        edge_types=data.edge_types,
+        in_channels_dict={nt: 17 for nt in data.node_types},
+        hidden_channels=16,
+        edge_dim=27,
+        num_layers=2,
+        heads=2,
+        dropout=0.0,
+        conv_type="pna",
+        use_edge_attr=True,
+        use_device_ip=True,
+    )
+    model.eval()
+    store = data[target_rel]
+    devices = data["user", "uses_device", "device"].edge_index[1]
+    ips = data["user", "uses_ip", "ip"].edge_index[1]
+
+    def logits(batch_size: int) -> torch.Tensor:
+        loader = CausalLinkNeighborLoader(
+            data=data,
+            num_neighbors=[10, 10],
+            edge_label_index=(target_rel, store.edge_index),
+            edge_label=store.edge_label,
+            edge_time=store.edge_time,
+            edge_attr=store.edge_attr,
+            device_index=devices,
+            ip_index=ips,
+            batch_size=batch_size,
+            shuffle=False,
+        )
+        outs = []
+        with torch.no_grad():
+            for batch in loader:
+                t = batch[target_rel]
+                outs.append(
+                    model(
+                        x_dict={nt: batch[nt].x for nt in batch.node_types},
+                        edge_index_dict={et: batch[et].edge_index for et in batch.edge_types},
+                        edge_label_index=t.edge_label_index,
+                        edge_attr=t.edge_attr,
+                        device_index=t.device_index,
+                        ip_index=t.ip_index,
+                    )
+                )
+        return torch.cat(outs)
+
+    assert torch.allclose(logits(5), logits(1), atol=1e-6)

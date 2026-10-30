@@ -7,7 +7,7 @@ name = "fraudgnn"
 version = "0.1.0"
 description = "Real-Time Fraud Detection with Graph Neural Networks"
 readme = "README.md"
-license = "MIT"
+license = "PolyForm-Noncommercial-1.0.0"
 requires-python = ">=3.11"
 authors = [{ name = "ML Engineer" }]
 keywords = ["fraud-detection", "gnn", "graph-neural-networks", "mlops"]
@@ -33,6 +33,8 @@ train = [
     "scikit-learn>=1.3",
     "mlflow>=2.8",
     "evidently>=0.4",
+    "shap>=0.42",
+    "pyvis>=0.3",
 ]
 serve = [
     "fastapi>=0.104",

@@ -193,7 +193,49 @@ In static graph snapshot evaluations, temporal splits are created at macro bound
    *Rationale*: Option A faithfully replicates production feature-store serving: when a transaction arrives at time $t$, upstream graph registries aggregate only historical events $t' < t$, achieving mathematical invariance to future events in $<0.5$ ms per batch.
 
 3. **Invariance Verification Test**:
-   Every causal loader is validated with an injection test: injecting an arbitrary $1,000,000 fake transaction strictly AFTER target edge timestamp $t_0$ in the same window must yield 100% bit-identical sampled neighborhoods, node feature tensors, and model logits (`torch.equal(out_clean, out_injected)`).
+   Every causal loader is validated with an injection test: injecting an arbitrary $1,000,000 fake transaction strictly AFTER target edge timestamp $t_0$ in the same window must yield 100% bit-identical sampled neighborhoods, node feature tensors, and model logits (`torch.equal(out_clean, out_injected)`). These tests use **batch size 1**.
 
+4. **Batch-sharing leak: found, measured, fixed for HeteroGAT** (2026-10-30):
+   - *Problem*: the loader built one induced subgraph per mini-batch. Edges sampled for a later target (before *its* timestamp) reached the embedding of an earlier target in the same batch, so a transaction could see events that happened after it. The invariance tests above used batch size 1 and missed it.
+   - *Measurement* (`scripts/measure_batch_leak.py`, `configs/batch_leak.yaml`; numbers in [benchmarks.md](benchmarks.md#batch-sharing-leak)): both HeteroGAT checkpoints were scored on the same rows (all test positives plus 20,000 seeded random negatives) at batch sizes 1, 16, 128 and 2048. Thresholds were set at 1% FPR on a matching validation subset. Downsampling negatives inflates PR-AUC, so the report also gives a PR-AUC with negatives re-weighted to the full test set. At batch size 1 (no leak) weighted PR-AUC is lower than at 2048 for both models, by +0.1157 [+0.0924, +0.1399] without binding and +0.0689 [+0.0340, +0.1098] with binding (paired bootstrap). The effect is not monotonic for the binding model: batch size 128 scores highest. *Hypothesis, not tested:* the models learned to use information from other targets in the 2048-target training batches, and how much a given batch helps depends on its composition.
+   - *Fix* (`isolate_targets=True`, now the default in `CausalLinkNeighborLoader`): every target gets its own subgraph. Nodes and edges are keyed by (target, id), and every node uses the target's own timestamp as cutoff. The per-target subgraphs are stacked block-diagonally into one forward pass. This reproduces scoring each target alone (max logit difference 1.9e-6 on 256 real test targets, float summation order). `test_batched_future_injection_leaks_between_targets` now passes, and `test_shared_batches_still_leak` keeps the legacy mode as a contrast. Adjacency queries were vectorized; the legacy shared mode is bit-identical to the previous loader on 4,096 real test targets.
+   - *Full test set, same checkpoints*: re-scored with isolated subgraphs, test PR-AUC falls from 0.2861 to 0.1648 without binding and from 0.5109 to 0.4608 with binding (`rescored_*` vs `rescored_shared_*` in MLflow; table in benchmarks.md).
+   - *Retraining needed*: yes, for a fair GNN number. The checkpoints were trained on leaky shared-subgraph batches, so the isolated scores measure leak-trained models under leak-free inputs, a train/test mismatch. Retraining with the fixed loader has not been run. GraphSAGE's homogeneous loader has the same issue and no isolated mode yet.
 
+5. **Re-scoring must reuse the training loader settings** (found 2026-10-30):
+   The removed SQL-sync version of `scripts/evaluate_unified.py` re-scored GNNs with `num_neighbors=[15, 10]` instead of the configured `[10, 10]`. The loader also silently seeded devices/IPs for the model trained without binding, taken from a misaligned prefix of the `uses_device`/`uses_ip` edges. With the training settings, the saved checkpoints reproduce their training-time test PR-AUC exactly. Device/IP seeding now requires explicit indices, and the re-score reads `num_neighbors`/`batch_size` from each model's config. Neighbor selection is deterministic (most recent k), so the loader seed has no effect on scores.
 
+## 18. Model Explainability
+
+**Context**: Analysts need short, checkable reasons for a flagged transaction. Explanations must
+respect the causal boundary (only data before the transaction's timestamp) and never use labels
+or the simulator's `fraud_type` as inputs.
+
+**One model per explanation**: an explanation describes exactly one scoring model. The score,
+threshold and every sentence come from that model's own attributions
+(`src/fraudgnn/explain/reason_codes.py` rejects mixed inputs). Earlier versions mixed an XGBoost
+score with HeteroGAT deltas and hand-thresholded facts, which attributed a score to evidence the
+scoring model never used.
+
+**XGBoost (label-free features)**: exact Tree SHAP (`shap.TreeExplainer`). Reason codes state
+the feature value, the training-split median as a reference, and whether the SHAP value raises
+or lowers the score. Earlier hand-typed "typical" values were removed.
+
+**HeteroGAT with device/IP binding**: one-at-a-time perturbation. The delta is the drop in
+predicted probability when the device embedding, the IP embedding, one edge-feature group or one
+sampled neighbor edge is removed (`src/fraudgnn/explain/gnn_explainer.py`). PyG's
+`Explainer(GNNExplainer)` raised a shape error on this model (`mat1 and mat2 shapes cannot be
+multiplied (1x256 and 283x64)`). *Hypothesis, not tested:* its masking does not account for the
+decoder's device/IP concatenation. The PyG explainer was not adapted.
+
+**Evaluation** (`scripts/make_explanation_examples.py`, settings in `configs/explain.yaml`): up
+to 50 random true positives per fraud type and model, then a deletion test. It removes the top-k
+risk-raising attributions and compares the score drop with removing k random attributions of
+the same model. Results, timings and one example per model and type are generated in
+[docs/examples/README.md](examples/README.md). The earlier "typology agreement" keyword check
+was dropped: it matched words in our own templates and did not test the model.
+
+**Limitations**: the deletion test shows that the named attributions matter to the model, not
+that they match the true fraud mechanism. Perturbation deltas are not additive. GNN explanations
+score the transaction on its own causal subgraph, the same input as the isolated (leak-free)
+test scores used to select the true positives.

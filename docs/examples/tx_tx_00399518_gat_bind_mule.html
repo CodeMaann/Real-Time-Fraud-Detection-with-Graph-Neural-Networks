@@ -1,0 +1,194 @@
+<html>
+    <head>
+        <meta charset="utf-8">
+        
+            <script src="lib/bindings/utils.js"></script>
+            <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.2/dist/dist/vis-network.min.css" integrity="sha512-WgxfT5LWjfszlPHXRmBWHkV2eceiWTOBvrKCNbdgDYTHrT2AeLCGbF4sZlZw3UMN3WtL0tGUoIAKsu8mllg/XA==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+            <script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.2/dist/vis-network.min.js" integrity="sha512-LnvoEWDFrqGHlHmDD2101OrLcbsfkrzoSpvtSQtxK3RMnRV0eOkhhBN2dXHKRrUU8p2DGRTk35n4O8nWSVe1mQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+            
+        
+<center>
+<h1></h1>
+</center>
+
+<!-- <link rel="stylesheet" href="../node_modules/vis/dist/vis.min.css" type="text/css" />
+<script type="text/javascript" src="../node_modules/vis/dist/vis.js"> </script>-->
+        <link
+          href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.0-beta3/dist/css/bootstrap.min.css"
+          rel="stylesheet"
+          integrity="sha384-eOJMYsd53ii+scO/bJGFsiCZc+5NDVN2yr8+0RDqr0Ql0h+rP48ckxlpbzKgwra6"
+          crossorigin="anonymous"
+        />
+        <script
+          src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.0-beta3/dist/js/bootstrap.bundle.min.js"
+          integrity="sha384-JEW9xMcG8R+pH31jmWH6WWP0WintQrMb4s7ZOdauHnUtxwoG2vI5DkLtS3qm9Ekf"
+          crossorigin="anonymous"
+        ></script>
+
+
+        <center>
+          <h1></h1>
+        </center>
+        <style type="text/css">
+
+             #mynetwork {
+                 width: 100%;
+                 height: 680px;
+                 background-color: #0F172A;
+                 border: 1px solid lightgray;
+                 position: relative;
+                 float: left;
+             }
+
+             
+
+             
+
+             
+        </style>
+    </head>
+
+
+    <body>
+
+    <div style="position: absolute; top: 16px; left: 16px; max-width: 650px; z-index: 1000; font-family: system-ui, -apple-system, sans-serif; background: rgba(15, 23, 42, 0.92); backdrop-filter: blur(8px); padding: 18px; border-radius: 12px; box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5); border: 1px solid #334155;">
+        <h2 style="margin: 0; font-size: 18px; color: #F8FAFC;">Transaction Causal Neighborhood: <code>tx_00399518</code></h2>
+        
+        <div style="display: flex; gap: 12px; align-items: center; margin-top: 8px;">
+            <span style="background: #EF4444; color: white; padding: 4px 10px; border-radius: 6px; font-weight: 700; font-size: 12px;">FLAGGED FOR REVIEW</span>
+            <span style="font-size: 13px; color: #94A3B8;">HeteroGAT (PNA, Causal, With Device/IP Binding) score: <strong style="color: #F8FAFC;">99.7%</strong> (Threshold: 99.5%)</span>
+        </div>
+        
+        
+        <div style="margin-top: 12px; background: rgba(30, 41, 59, 0.7); padding: 12px 16px; border-radius: 8px; border-left: 4px solid #38BDF8;">
+            <div style="font-weight: 600; font-size: 14px; color: #38BDF8; margin-bottom: 6px;">Explanatory Reason Codes (Causal Facts Only):</div>
+            <ol style="margin: 0; padding-left: 20px; font-size: 13px; color: #E2E8F0; line-height: 1.5;">
+                <li style='margin-bottom: 6px;'>Transaction tx_00399518 scored 0.997 with HeteroGAT (PNA, Causal, With Device/IP Binding) on its own causal subgraph; its validation-selected threshold is 0.995.</li><li style='margin-bottom: 6px;'>Removing the time-since-previous-transaction features lowers the score by 0.046.</li><li style='margin-bottom: 6px;'>Removing the time-of-day and day-of-week features lowers the score by 0.019.</li><li style='margin-bottom: 6px;'>Each change is measured with one component removed at a time; changes are not additive.</li>
+            </ol>
+        </div>
+        
+        
+        <div style="margin-top: 10px; background: rgba(15, 23, 42, 0.85); padding: 8px 12px; border-radius: 6px; border: 1px dashed #E11D48; font-size: 12px; color: #CBD5E1;">
+            <strong style="color: #E11D48;">[POST-HOC AUDIT ONLY - NOT VISIBLE TO MODEL]</strong> Ground Truth: <strong style="color: #E11D48;">FRAUDULENT</strong> | Typology: <strong>mule</strong>
+        </div>
+        
+        <div style="margin-top: 12px; display: flex; gap: 14px; font-size: 11px; color: #94A3B8;">
+            <span><strong style="color: #38BDF8;">●</strong> User</span>
+            <span><strong style="color: #A855F7;">●</strong> Merchant</span>
+            <span><strong style="color: #10B981;">●</strong> Device</span>
+            <span><strong style="color: #FB923C;">●</strong> IP Address</span>
+            <span><strong style="color: #F43F5E;">▬</strong> Target Tx</span>
+        </div>
+    </div>
+    
+        <div class="card" style="width: 100%">
+            
+            
+            <div id="mynetwork" class="card-body"></div>
+        </div>
+
+        
+        
+
+        <script type="text/javascript">
+
+              // initialize global variables.
+              var edges;
+              var nodes;
+              var allNodes;
+              var allEdges;
+              var nodeColors;
+              var originalNodes;
+              var network;
+              var container;
+              var options, data;
+              var filter = {
+                  item : '',
+                  property : '',
+                  value : []
+              };
+
+              
+
+              
+
+              // This method is responsible for drawing the graph, returns the drawn network
+              function drawGraph() {
+                  var container = document.getElementById('mynetwork');
+
+                  
+
+                  // parsing and collecting nodes and edges from the python
+                  nodes = new vis.DataSet([{"borderWidth": 4, "color": {"background": "#38BDF8", "border": "#E11D48", "highlight": {"background": "#F43F5E", "border": "#FFE4E6"}}, "font": {"color": "#F8FAFC"}, "id": "user_usr_002051", "label": "User\nusr_002051", "shape": "dot", "size": 32, "title": "Target User: usr_002051"}, {"borderWidth": 4, "color": {"background": "#A855F7", "border": "#E11D48", "highlight": {"background": "#F43F5E", "border": "#FFE4E6"}}, "font": {"color": "#F8FAFC"}, "id": "merch_mer_00993", "label": "Merchant\nmer_00993", "shape": "dot", "size": 32, "title": "Target Merchant: mer_00993"}, {"borderWidth": 4, "color": {"background": "#10B981", "border": "#E11D48", "highlight": {"background": "#F43F5E", "border": "#FFE4E6"}}, "font": {"color": "#F8FAFC"}, "id": "dev_dev_003529", "label": "Device\ndev_003529", "shape": "dot", "size": 32, "title": "Target Device: dev_003529"}, {"borderWidth": 4, "color": {"background": "#FB923C", "border": "#E11D48", "highlight": {"background": "#F43F5E", "border": "#FFE4E6"}}, "font": {"color": "#F8FAFC"}, "id": "ip_198.51.1.188", "label": "IP\n198.51.1.1", "shape": "dot", "size": 32, "title": "Target IP: 198.51.1.188"}, {"borderWidth": 1, "color": {"background": "#38BDF8", "border": "#38BDF8", "highlight": {"background": "#F43F5E", "border": "#FFE4E6"}}, "font": {"color": "#F8FAFC"}, "id": "user_usr_000833", "label": "User\nusr_000833", "shape": "dot", "size": 20, "title": "Shared Device User: usr_000833"}, {"borderWidth": 1, "color": {"background": "#38BDF8", "border": "#38BDF8", "highlight": {"background": "#F43F5E", "border": "#FFE4E6"}}, "font": {"color": "#F8FAFC"}, "id": "user_usr_007497", "label": "User\nusr_007497", "shape": "dot", "size": 20, "title": "Shared Device User: usr_007497"}, {"borderWidth": 1, "color": {"background": "#38BDF8", "border": "#38BDF8", "highlight": {"background": "#F43F5E", "border": "#FFE4E6"}}, "font": {"color": "#F8FAFC"}, "id": "user_usr_001176", "label": "User\nusr_001176", "shape": "dot", "size": 20, "title": "Shared Device User: usr_001176"}, {"borderWidth": 1, "color": {"background": "#38BDF8", "border": "#38BDF8", "highlight": {"background": "#F43F5E", "border": "#FFE4E6"}}, "font": {"color": "#F8FAFC"}, "id": "user_usr_002543", "label": "User\nusr_002543", "shape": "dot", "size": 20, "title": "Shared Device User: usr_002543"}, {"borderWidth": 1, "color": {"background": "#38BDF8", "border": "#38BDF8", "highlight": {"background": "#F43F5E", "border": "#FFE4E6"}}, "font": {"color": "#F8FAFC"}, "id": "user_usr_004606", "label": "User\nusr_004606", "shape": "dot", "size": 20, "title": "Shared Device User: usr_004606"}, {"borderWidth": 1, "color": {"background": "#38BDF8", "border": "#38BDF8", "highlight": {"background": "#F43F5E", "border": "#FFE4E6"}}, "font": {"color": "#F8FAFC"}, "id": "user_usr_002171", "label": "User\nusr_002171", "shape": "dot", "size": 20, "title": "Shared Device User: usr_002171"}, {"borderWidth": 1, "color": {"background": "#38BDF8", "border": "#38BDF8", "highlight": {"background": "#F43F5E", "border": "#FFE4E6"}}, "font": {"color": "#F8FAFC"}, "id": "user_usr_002628", "label": "User\nusr_002628", "shape": "dot", "size": 20, "title": "Shared Device User: usr_002628"}, {"borderWidth": 1, "color": {"background": "#38BDF8", "border": "#38BDF8", "highlight": {"background": "#F43F5E", "border": "#FFE4E6"}}, "font": {"color": "#F8FAFC"}, "id": "user_usr_008311", "label": "User\nusr_008311", "shape": "dot", "size": 20, "title": "Shared IP User: usr_008311"}, {"borderWidth": 1, "color": {"background": "#38BDF8", "border": "#38BDF8", "highlight": {"background": "#F43F5E", "border": "#FFE4E6"}}, "font": {"color": "#F8FAFC"}, "id": "user_usr_009704", "label": "User\nusr_009704", "shape": "dot", "size": 20, "title": "Shared IP User: usr_009704"}, {"borderWidth": 1, "color": {"background": "#38BDF8", "border": "#38BDF8", "highlight": {"background": "#F43F5E", "border": "#FFE4E6"}}, "font": {"color": "#F8FAFC"}, "id": "user_usr_005629", "label": "User\nusr_005629", "shape": "dot", "size": 20, "title": "Shared IP User: usr_005629"}, {"borderWidth": 1, "color": {"background": "#38BDF8", "border": "#38BDF8", "highlight": {"background": "#F43F5E", "border": "#FFE4E6"}}, "font": {"color": "#F8FAFC"}, "id": "user_usr_005109", "label": "User\nusr_005109", "shape": "dot", "size": 20, "title": "Shared IP User: usr_005109"}, {"borderWidth": 1, "color": {"background": "#38BDF8", "border": "#38BDF8", "highlight": {"background": "#F43F5E", "border": "#FFE4E6"}}, "font": {"color": "#F8FAFC"}, "id": "user_usr_008466", "label": "User\nusr_008466", "shape": "dot", "size": 20, "title": "Shared IP User: usr_008466"}, {"borderWidth": 1, "color": {"background": "#38BDF8", "border": "#38BDF8", "highlight": {"background": "#F43F5E", "border": "#FFE4E6"}}, "font": {"color": "#F8FAFC"}, "id": "user_usr_006685", "label": "User\nusr_006685", "shape": "dot", "size": 20, "title": "Shared IP User: usr_006685"}, {"borderWidth": 1, "color": {"background": "#38BDF8", "border": "#38BDF8", "highlight": {"background": "#F43F5E", "border": "#FFE4E6"}}, "font": {"color": "#F8FAFC"}, "id": "user_usr_008621", "label": "User\nusr_008621", "shape": "dot", "size": 20, "title": "Shared IP User: usr_008621"}, {"borderWidth": 1, "color": {"background": "#38BDF8", "border": "#38BDF8", "highlight": {"background": "#F43F5E", "border": "#FFE4E6"}}, "font": {"color": "#F8FAFC"}, "id": "user_usr_004474", "label": "User\nusr_004474", "shape": "dot", "size": 20, "title": "Shared IP User: usr_004474"}, {"borderWidth": 1, "color": {"background": "#38BDF8", "border": "#38BDF8", "highlight": {"background": "#F43F5E", "border": "#FFE4E6"}}, "font": {"color": "#F8FAFC"}, "id": "user_usr_007140", "label": "User\nusr_007140", "shape": "dot", "size": 20, "title": "Shared IP User: usr_007140"}, {"borderWidth": 1, "color": {"background": "#A855F7", "border": "#A855F7", "highlight": {"background": "#F43F5E", "border": "#FFE4E6"}}, "font": {"color": "#F8FAFC"}, "id": "merch_mer_00069", "label": "Merchant\nmer_00069", "shape": "dot", "size": 20, "title": "Prior Merchant: mer_00069"}, {"borderWidth": 1, "color": {"background": "#A855F7", "border": "#A855F7", "highlight": {"background": "#F43F5E", "border": "#FFE4E6"}}, "font": {"color": "#F8FAFC"}, "id": "merch_mer_00232", "label": "Merchant\nmer_00232", "shape": "dot", "size": 20, "title": "Prior Merchant: mer_00232"}, {"borderWidth": 1, "color": {"background": "#A855F7", "border": "#A855F7", "highlight": {"background": "#F43F5E", "border": "#FFE4E6"}}, "font": {"color": "#F8FAFC"}, "id": "merch_mer_00718", "label": "Merchant\nmer_00718", "shape": "dot", "size": 20, "title": "Prior Merchant: mer_00718"}, {"borderWidth": 1, "color": {"background": "#A855F7", "border": "#A855F7", "highlight": {"background": "#F43F5E", "border": "#FFE4E6"}}, "font": {"color": "#F8FAFC"}, "id": "merch_mer_00144", "label": "Merchant\nmer_00144", "shape": "dot", "size": 20, "title": "Prior Merchant: mer_00144"}, {"borderWidth": 1, "color": {"background": "#A855F7", "border": "#A855F7", "highlight": {"background": "#F43F5E", "border": "#FFE4E6"}}, "font": {"color": "#F8FAFC"}, "id": "merch_mer_00615", "label": "Merchant\nmer_00615", "shape": "dot", "size": 20, "title": "Prior Merchant: mer_00615"}, {"borderWidth": 1, "color": {"background": "#A855F7", "border": "#A855F7", "highlight": {"background": "#F43F5E", "border": "#FFE4E6"}}, "font": {"color": "#F8FAFC"}, "id": "merch_mer_00140", "label": "Merchant\nmer_00140", "shape": "dot", "size": 20, "title": "Prior Merchant: mer_00140"}, {"borderWidth": 1, "color": {"background": "#A855F7", "border": "#A855F7", "highlight": {"background": "#F43F5E", "border": "#FFE4E6"}}, "font": {"color": "#F8FAFC"}, "id": "merch_mer_00000", "label": "Merchant\nmer_00000", "shape": "dot", "size": 20, "title": "Prior Merchant: mer_00000"}, {"borderWidth": 1, "color": {"background": "#A855F7", "border": "#A855F7", "highlight": {"background": "#F43F5E", "border": "#FFE4E6"}}, "font": {"color": "#F8FAFC"}, "id": "merch_mer_00689", "label": "Merchant\nmer_00689", "shape": "dot", "size": 20, "title": "Prior Merchant: mer_00689"}, {"borderWidth": 1, "color": {"background": "#A855F7", "border": "#A855F7", "highlight": {"background": "#F43F5E", "border": "#FFE4E6"}}, "font": {"color": "#F8FAFC"}, "id": "merch_mer_00204", "label": "Merchant\nmer_00204", "shape": "dot", "size": 20, "title": "Prior Merchant: mer_00204"}, {"borderWidth": 1, "color": {"background": "#A855F7", "border": "#A855F7", "highlight": {"background": "#F43F5E", "border": "#FFE4E6"}}, "font": {"color": "#F8FAFC"}, "id": "merch_mer_00888", "label": "Merchant\nmer_00888", "shape": "dot", "size": 20, "title": "Prior Merchant: mer_00888"}]);
+                  edges = new vis.DataSet([{"arrows": "to", "color": "#F43F5E", "dashes": false, "font": {"color": "#CBD5E1", "size": 10}, "from": "user_usr_002051", "label": "$4.96 [TARGET TX]", "to": "merch_mer_00993", "width": 5.0}, {"arrows": "to", "color": "#F59E0B", "dashes": true, "font": {"color": "#CBD5E1", "size": 10}, "from": "user_usr_002051", "label": "uses_device", "to": "dev_dev_003529", "width": 3.0}, {"arrows": "to", "color": "#F59E0B", "dashes": true, "font": {"color": "#CBD5E1", "size": 10}, "from": "user_usr_002051", "label": "uses_ip", "to": "ip_198.51.1.188", "width": 3.0}, {"arrows": "to", "color": "#475569", "dashes": false, "font": {"color": "#CBD5E1", "size": 10}, "from": "user_usr_002051", "label": "", "to": "merch_mer_00069", "width": 1.5}, {"arrows": "to", "color": "#475569", "dashes": false, "font": {"color": "#CBD5E1", "size": 10}, "from": "user_usr_002051", "label": "", "to": "merch_mer_00232", "width": 1.5}, {"arrows": "to", "color": "#475569", "dashes": false, "font": {"color": "#CBD5E1", "size": 10}, "from": "user_usr_002051", "label": "", "to": "merch_mer_00718", "width": 1.5}, {"arrows": "to", "color": "#475569", "dashes": false, "font": {"color": "#CBD5E1", "size": 10}, "from": "user_usr_002051", "label": "", "to": "merch_mer_00144", "width": 1.5}, {"arrows": "to", "color": "#475569", "dashes": false, "font": {"color": "#CBD5E1", "size": 10}, "from": "user_usr_002051", "label": "", "to": "merch_mer_00615", "width": 1.5}, {"arrows": "to", "color": "#475569", "dashes": false, "font": {"color": "#CBD5E1", "size": 10}, "from": "user_usr_002051", "label": "", "to": "merch_mer_00140", "width": 1.5}, {"arrows": "to", "color": "#475569", "dashes": false, "font": {"color": "#CBD5E1", "size": 10}, "from": "user_usr_002051", "label": "", "to": "merch_mer_00000", "width": 1.5}, {"arrows": "to", "color": "#475569", "dashes": false, "font": {"color": "#CBD5E1", "size": 10}, "from": "user_usr_002051", "label": "", "to": "merch_mer_00689", "width": 1.5}, {"arrows": "to", "color": "#475569", "dashes": false, "font": {"color": "#CBD5E1", "size": 10}, "from": "user_usr_002051", "label": "", "to": "merch_mer_00204", "width": 1.5}, {"arrows": "to", "color": "#475569", "dashes": false, "font": {"color": "#CBD5E1", "size": 10}, "from": "user_usr_002051", "label": "", "to": "merch_mer_00888", "width": 1.5}, {"arrows": "to", "color": "#475569", "dashes": true, "font": {"color": "#CBD5E1", "size": 10}, "from": "user_usr_000833", "label": "uses_device", "to": "dev_dev_003529", "width": 1.5}, {"arrows": "to", "color": "#475569", "dashes": true, "font": {"color": "#CBD5E1", "size": 10}, "from": "user_usr_007497", "label": "uses_device", "to": "dev_dev_003529", "width": 1.5}, {"arrows": "to", "color": "#475569", "dashes": true, "font": {"color": "#CBD5E1", "size": 10}, "from": "user_usr_001176", "label": "uses_device", "to": "dev_dev_003529", "width": 1.5}, {"arrows": "to", "color": "#475569", "dashes": true, "font": {"color": "#CBD5E1", "size": 10}, "from": "user_usr_002543", "label": "uses_device", "to": "dev_dev_003529", "width": 1.5}, {"arrows": "to", "color": "#475569", "dashes": true, "font": {"color": "#CBD5E1", "size": 10}, "from": "user_usr_004606", "label": "uses_device", "to": "dev_dev_003529", "width": 1.5}, {"arrows": "to", "color": "#475569", "dashes": true, "font": {"color": "#CBD5E1", "size": 10}, "from": "user_usr_002171", "label": "uses_device", "to": "dev_dev_003529", "width": 1.5}, {"arrows": "to", "color": "#475569", "dashes": true, "font": {"color": "#CBD5E1", "size": 10}, "from": "user_usr_002628", "label": "uses_device", "to": "dev_dev_003529", "width": 1.5}, {"arrows": "to", "color": "#475569", "dashes": true, "font": {"color": "#CBD5E1", "size": 10}, "from": "user_usr_008311", "label": "uses_ip", "to": "ip_198.51.1.188", "width": 1.5}, {"arrows": "to", "color": "#475569", "dashes": true, "font": {"color": "#CBD5E1", "size": 10}, "from": "user_usr_009704", "label": "uses_ip", "to": "ip_198.51.1.188", "width": 1.5}, {"arrows": "to", "color": "#475569", "dashes": true, "font": {"color": "#CBD5E1", "size": 10}, "from": "user_usr_005629", "label": "uses_ip", "to": "ip_198.51.1.188", "width": 1.5}, {"arrows": "to", "color": "#475569", "dashes": true, "font": {"color": "#CBD5E1", "size": 10}, "from": "user_usr_005109", "label": "uses_ip", "to": "ip_198.51.1.188", "width": 1.5}, {"arrows": "to", "color": "#475569", "dashes": true, "font": {"color": "#CBD5E1", "size": 10}, "from": "user_usr_008466", "label": "uses_ip", "to": "ip_198.51.1.188", "width": 1.5}, {"arrows": "to", "color": "#475569", "dashes": true, "font": {"color": "#CBD5E1", "size": 10}, "from": "user_usr_006685", "label": "uses_ip", "to": "ip_198.51.1.188", "width": 1.5}, {"arrows": "to", "color": "#475569", "dashes": true, "font": {"color": "#CBD5E1", "size": 10}, "from": "user_usr_008621", "label": "uses_ip", "to": "ip_198.51.1.188", "width": 1.5}, {"arrows": "to", "color": "#475569", "dashes": true, "font": {"color": "#CBD5E1", "size": 10}, "from": "user_usr_004474", "label": "uses_ip", "to": "ip_198.51.1.188", "width": 1.5}, {"arrows": "to", "color": "#475569", "dashes": true, "font": {"color": "#CBD5E1", "size": 10}, "from": "user_usr_007140", "label": "uses_ip", "to": "ip_198.51.1.188", "width": 1.5}]);
+
+                  nodeColors = {};
+                  allNodes = nodes.get({ returnType: "Object" });
+                  for (nodeId in allNodes) {
+                    nodeColors[nodeId] = allNodes[nodeId].color;
+                  }
+                  allEdges = edges.get({ returnType: "Object" });
+                  // adding nodes and edges to the graph
+                  data = {nodes: nodes, edges: edges};
+
+                  var options = {
+    "configure": {
+        "enabled": false
+    },
+    "edges": {
+        "color": {
+            "inherit": true
+        },
+        "smooth": {
+            "enabled": true,
+            "type": "dynamic"
+        }
+    },
+    "interaction": {
+        "dragNodes": true,
+        "hideEdgesOnDrag": false,
+        "hideNodesOnDrag": false
+    },
+    "physics": {
+        "barnesHut": {
+            "avoidOverlap": 0,
+            "centralGravity": 0.3,
+            "damping": 0.95,
+            "gravitationalConstant": -3000,
+            "springConstant": 0.001,
+            "springLength": 120
+        },
+        "enabled": true,
+        "stabilization": {
+            "enabled": true,
+            "fit": true,
+            "iterations": 1000,
+            "onlyDynamicEdges": false,
+            "updateInterval": 50
+        }
+    }
+};
+
+                  
+
+
+                  
+
+                  network = new vis.Network(container, data, options);
+
+                  
+
+                  
+
+                  
+
+
+                  
+
+                  return network;
+
+              }
+              drawGraph();
+        </script>
+    </body>
+</html>

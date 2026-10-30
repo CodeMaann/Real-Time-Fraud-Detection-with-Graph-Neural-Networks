@@ -103,7 +103,9 @@ def train_and_eval_mlp(
     test_amounts = df_test["amount"].to_numpy()
     test_fraud_types = df_test["fraud_type"].to_numpy()
 
-    print(f"Data shapes: Train={X_train.shape[0]:,}, Val={X_val.shape[0]:,}, Test={X_test.shape[0]:,}")
+    print(
+        f"Data shapes: Train={X_train.shape[0]:,}, Val={X_val.shape[0]:,}, Test={X_test.shape[0]:,}"
+    )
     print(f"Features: {X_train.shape[1]} dims")
 
     # DataLoader
@@ -173,7 +175,9 @@ def train_and_eval_mlp(
         else:
             patience_cnt += 1
             if patience_cnt >= patience:
-                print(f"Early stopping at epoch {epoch} (best epoch: {best_epoch}, best val PR-AUC: {best_val_pr_auc:.4f})")
+                print(
+                    f"Early stopping at epoch {epoch} (best epoch: {best_epoch}, best val PR-AUC: {best_val_pr_auc:.4f})"
+                )
                 break
 
     assert best_state is not None

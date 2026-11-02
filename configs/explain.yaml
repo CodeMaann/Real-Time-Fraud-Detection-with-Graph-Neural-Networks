@@ -12,7 +12,17 @@ top_k: 5                    # attributions computed per explanation
 faithfulness_k: 3           # top attributions removed together in the deletion test
 random_baselines: 5         # random k-subsets per case for the comparison
 max_edge_ablations: 50      # GNN neighbor edges dropped one at a time
-html_examples: true          # one interactive neighborhood page per model and fraud type
+html_examples: true         # one interactive neighborhood page per model and fraud type
+viz_resources: remote       # remote (CDN scripts, small pages) or in_line (offline, ~700 KB each)
+
+ring_png:                   # static picture for the examples README
+  model: gat_bind
+  fraud_type: fraud_ring
+  path: docs/examples/ring_example.png
+  width_in: 8
+  height_in: 5.5
+  dpi: 110
+  layout_seed: 42
 
 fraud_types:
   - fraud_ring

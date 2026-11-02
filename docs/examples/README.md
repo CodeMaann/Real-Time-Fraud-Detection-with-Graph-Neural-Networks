@@ -10,21 +10,27 @@ For each model and fraud type, up to 50 random true positives (seed 42) are expl
 
 | Fraud type | Explained / TPs available | Faithful (k/n tested) | Mean drop, top-k | Mean drop, random-k | Most common top attribution | Median ms per explanation |
 |---|---|---|---|---|---|---|
-| fraud_ring | 50/83 | 50/50 | 0.8341 | 0.0785 | `two_hop_ip_users` (30/50) | 7.8 |
-| account_takeover | 50/72 | 50/50 | 0.8630 | 0.0674 | `ip_distinct_users` (40/50) | 7.6 |
-| merchant_collusion | 50/51 | 50/50 | 0.8358 | 0.0831 | `ip_distinct_users` (37/50) | 8.4 |
-| card_testing | 50/113 | 50/50 | 0.8603 | 0.1479 | `time_delta_card` (43/50) | 7.7 |
-| mule | 47/47 | 47/47 | 0.7165 | 0.0778 | `time_delta_card` (43/47) | 7.5 |
+| fraud_ring | 50/83 | 50/50 | 0.8341 | 0.0785 | `two_hop_ip_users` (30/50) | 7.2 |
+| account_takeover | 50/72 | 50/50 | 0.8630 | 0.0674 | `ip_distinct_users` (40/50) | 7.3 |
+| merchant_collusion | 50/51 | 50/50 | 0.8358 | 0.0831 | `ip_distinct_users` (37/50) | 7.2 |
+| card_testing | 50/113 | 50/50 | 0.8603 | 0.1479 | `time_delta_card` (43/50) | 8.2 |
+| mule | 47/47 | 47/47 | 0.7165 | 0.0778 | `time_delta_card` (43/47) | 8.1 |
 
 ## HeteroGAT (PNA, Causal, With Device/IP Binding)
 
 | Fraud type | Explained / TPs available | Faithful (k/n tested) | Mean drop, top-k | Mean drop, random-k | Most common top attribution | Median ms per explanation |
 |---|---|---|---|---|---|---|
-| fraud_ring | 50/140 | 50/50 | 0.2047 | 0.0246 | `historical_merchant` (35/50) | 345.6 |
-| account_takeover | 50/55 | 50/50 | 0.1678 | 0.0196 | `ip_binding` (33/50) | 315.1 |
-| merchant_collusion | 50/54 | 50/50 | 0.2323 | 0.0329 | `ip_binding` (29/50) | 314.3 |
-| card_testing | 50/92 | 50/50 | 0.4963 | 0.0617 | `card_velocity` (26/50) | 315.0 |
-| mule | 15/15 | 15/15 | 0.7223 | 0.0937 | `time_delta` (7/15) | 313.9 |
+| fraud_ring | 50/140 | 50/50 | 0.2047 | 0.0246 | `historical_merchant` (35/50) | 386.0 |
+| account_takeover | 50/55 | 50/50 | 0.1678 | 0.0196 | `ip_binding` (33/50) | 321.3 |
+| merchant_collusion | 50/54 | 50/50 | 0.2323 | 0.0329 | `ip_binding` (29/50) | 382.3 |
+| card_testing | 50/92 | 50/50 | 0.4963 | 0.0617 | `card_velocity` (26/50) | 386.5 |
+| mule | 15/15 | 15/15 | 0.7223 | 0.0937 | `time_delta` (7/15) | 361.3 |
+
+## Static example
+
+![2-hop neighborhood of a flagged fraud_ring transaction](ring_example.png)
+
+The fraud type is a post-hoc label shown for auditing only; it is not a model input.
 
 ## One example per model and fraud type
 

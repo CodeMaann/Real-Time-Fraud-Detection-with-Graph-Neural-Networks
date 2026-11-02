@@ -190,6 +190,9 @@ class ModelConfig(BaseModel):
         default=True, description="Whether edge decoder consumes edge attributes"
     )
     edge_dim: int = Field(default=10, gt=0, description="Dimension of transaction edge attributes")
+    use_device_ip: bool = Field(
+        default=True, description="HeteroGAT: bind device and IP embeddings in the decoder"
+    )
 
 
 class TrainingConfig(BaseModel):
@@ -197,6 +200,12 @@ class TrainingConfig(BaseModel):
 
     epochs: int = Field(default=10, gt=0)
     batch_size: int = Field(default=512, gt=0)
+    micro_batch_size: int | None = Field(
+        default=None,
+        gt=0,
+        description="Targets per forward/backward pass; batch_size must be a multiple. "
+        "Gradients are accumulated to one optimizer step per batch_size targets.",
+    )
     learning_rate: float = Field(default=1e-3, gt=0.0)
     weight_decay: float = Field(default=1e-5, ge=0.0)
     patience: int = Field(default=5, ge=1, description="Early-stopping patience on val PR-AUC")
@@ -212,6 +221,16 @@ class TrainingConfig(BaseModel):
     pos_weight: float | None = Field(default=None)
     num_neighbors: list[int] = Field(default=[10, 10])
     model_save_path: Path = Path("models/best_gnn.pt")
+    best_model_dir: Path = Field(
+        default=Path("models"), description="Folder for the best causal checkpoint"
+    )
+    checkpoint_path: Path | None = Field(
+        default=None,
+        description="Resume state written after every epoch (e.g. on Google Drive); None = off",
+    )
+    deterministic: bool = Field(
+        default=False, description="Force deterministic cuDNN kernels (slower on GPU)"
+    )
     mlflow_tracking_uri: str = "sqlite:///mlflow.db"
     mlflow_experiment_name: str = "fraud-gnn"
 

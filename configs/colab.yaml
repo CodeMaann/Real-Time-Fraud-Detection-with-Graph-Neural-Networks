@@ -1,0 +1,10 @@
+# ── Files to upload to Google Drive for Colab training ────────────────
+# scripts/make_colab_manifest.py hashes these local files; the notebook verifies the copies.
+# Paths are relative to the repository root here and to <drive_root> on Drive.
+
+files:
+  - data/processed/train_graph.pt
+  - data/processed/val_graph.pt
+  - data/processed/test_graph.pt
+  - data/raw/transactions.parquet
+manifest_out: notebooks/colab_manifest.json

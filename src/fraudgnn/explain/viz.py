@@ -1,7 +1,8 @@
 """Interactive causal neighborhood visualization for flagged transactions.
 
 Renders the 2-hop causal historical sub-network into standalone interactive HTML
-using PyVis. Colors target transactions, shared devices/IPs, and user accounts.
+(PyVis) or a static PNG (matplotlib). Colors target transactions, shared devices/IPs,
+and user accounts.
 Labels and fraud flags are never used as model inputs and appear strictly as an
 optional, explicitly-labeled post-hoc overlay.
 """
@@ -10,9 +11,28 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import matplotlib
+
+matplotlib.use("Agg")
+
+import matplotlib.pyplot as plt
 import networkx as nx
 import pandas as pd
+from matplotlib.lines import Line2D
 from pyvis.network import Network
+
+# "remote" loads vis-network from a CDN (small pages, needs internet to view);
+# "in_line" embeds it (offline, ~700 KB per page). Neither writes a local lib/ folder.
+VIZ_RESOURCES = ("remote", "in_line")
+
+NODE_COLORS = {
+    "user": "#38BDF8",  # Light blue
+    "merchant": "#A855F7",  # Purple
+    "device": "#10B981",  # Emerald Green
+    "ip": "#FB923C",  # Warm Orange
+}
+DEFAULT_NODE_COLOR = "#94A3B8"
+TARGET_COLOR = "#E11D48"
 
 
 def extract_2hop_causal_subgraph(
@@ -22,8 +42,8 @@ def extract_2hop_causal_subgraph(
 ) -> nx.MultiDiGraph:
     """Extract strictly causal 2-hop neighborhood graph for a target transaction.
 
-    Only edges occurring strictly before or equal to the target transaction's timestamp
-    are included.
+    Only transactions strictly before the target's timestamp are included, plus the
+    target transaction itself.
 
     Args:
         df: Transaction DataFrame containing timestamp, user_id, merchant_id, device_id, etc.
@@ -45,7 +65,9 @@ def extract_2hop_causal_subgraph(
     target_ip = str(row["ip_address"]) if pd.notna(row.get("ip_address")) else None
 
     # Filter strictly causal history up to t_target
-    df_history = df[pd.to_datetime(df["timestamp"]) <= t_target].copy()
+    df_history = df[
+        (pd.to_datetime(df["timestamp"]) < t_target) | (df["transaction_id"] == target_tx_id)
+    ].copy()
 
     g = nx.MultiDiGraph()
 
@@ -184,6 +206,7 @@ def render_causal_neighborhood_html(
     post_hoc_fraud_type: str | None = None,
     is_fraud_ground_truth: bool | None = None,
     model_name: str = "Model",
+    cdn_resources: str = "remote",
 ) -> str:
     """Render interactive PyVis HTML network of the 2-hop causal neighborhood.
 
@@ -197,31 +220,31 @@ def render_causal_neighborhood_html(
         post_hoc_fraud_type: Ground truth simulation label for post-hoc display only.
         is_fraud_ground_truth: Ground truth fraud flag for post-hoc display only.
         model_name: Name of the single model whose score and reason codes are shown.
+        cdn_resources: "remote" (CDN scripts, small file) or "in_line" (embedded scripts).
 
     Returns:
         HTML string content of the generated visualization.
     """
+    if cdn_resources not in VIZ_RESOURCES:
+        raise ValueError(f"cdn_resources must be one of {VIZ_RESOURCES}, got {cdn_resources!r}")
     g = extract_2hop_causal_subgraph(df, target_tx_id)
 
     net = Network(
-        height="680px", width="100%", bgcolor="#0F172A", font_color="#F8FAFC", directed=True
+        height="680px",
+        width="100%",
+        bgcolor="#0F172A",
+        font_color="#F8FAFC",
+        directed=True,
+        cdn_resources=cdn_resources,
     )
     net.barnes_hut(gravity=-3000, central_gravity=0.3, spring_length=120, damping=0.95)
-
-    # Distinct curated color palette
-    NODE_COLORS = {
-        "user": "#38BDF8",  # Light blue
-        "merchant": "#A855F7",  # Purple
-        "device": "#10B981",  # Emerald Green
-        "ip": "#FB923C",  # Warm Orange
-    }
 
     # Add nodes to PyVis
     for node_id, attrs in g.nodes(data=True):
         entity_type = attrs.get("entity_type", "user")
         is_target = attrs.get("is_target", False)
 
-        base_color = NODE_COLORS.get(entity_type, "#94A3B8")
+        base_color = NODE_COLORS.get(entity_type, DEFAULT_NODE_COLOR)
         size = 32 if is_target else 20
         border_width = 4 if is_target else 1
         border_color = "#E11D48" if is_target else base_color
@@ -275,10 +298,11 @@ def render_causal_neighborhood_html(
 
     out_file = Path(output_path)
     out_file.parent.mkdir(parents=True, exist_ok=True)
-    net.save_graph(str(out_file))
+    # Build the HTML in memory: save_graph() writes with the platform default encoding
+    # (cp1252 on Windows), which cannot encode the inlined vis-network bundle.
+    raw_html: str = net.generate_html(name=out_file.name)
 
-    # Read generated HTML and inject a responsive info overlay card
-    raw_html = out_file.read_text(encoding="utf-8")
+    # Inject a responsive info overlay card
 
     # Build Header Card with Reason Codes & Post-Hoc Ground Truth
     reasons_html = ""
@@ -340,3 +364,105 @@ def render_causal_neighborhood_html(
     out_file.write_text(injected_html, encoding="utf-8")
 
     return injected_html
+
+
+def render_neighborhood_png(
+    df: pd.DataFrame,
+    target_tx_id: str,
+    output_path: str,
+    model_name: str,
+    risk_score: float,
+    threshold: float,
+    post_hoc_fraud_type: str | None = None,
+    width_in: float = 8.0,
+    height_in: float = 5.5,
+    dpi: int = 110,
+    layout_seed: int = 42,
+) -> Path:
+    """Render the 2-hop causal neighborhood of one transaction as a static PNG.
+
+    The fraud label is drawn only as a separate, explicitly marked post-hoc overlay; it is
+    never an input to the model or to the graph extraction.
+
+    Args:
+        df: Transaction dataset.
+        target_tx_id: Target transaction ID.
+        output_path: Destination PNG path.
+        model_name: Model whose score is shown.
+        risk_score: That model's score for the transaction.
+        threshold: That model's validation-selected threshold.
+        post_hoc_fraud_type: Optional ground-truth typology for the post-hoc overlay.
+        width_in: Figure width in inches.
+        height_in: Figure height in inches.
+        dpi: Output resolution.
+        layout_seed: Seed for the spring layout (reproducible picture).
+
+    Returns:
+        Path of the written PNG.
+    """
+    g = extract_2hop_causal_subgraph(df, target_tx_id)
+    simple = nx.Graph(g)  # collapse parallel edges for layout and drawing
+    pos = nx.spring_layout(simple, seed=layout_seed)
+
+    fig, ax = plt.subplots(figsize=(width_in, height_in), dpi=dpi)
+    target_edges = [(u, v) for u, v, d in g.edges(data=True) if d.get("is_target_edge")]
+    other_edges = [
+        e for e in simple.edges() if e not in target_edges and e[::-1] not in target_edges
+    ]
+    nx.draw_networkx_edges(
+        simple, pos, edgelist=other_edges, ax=ax, edge_color="#94A3B8", width=1.0
+    )
+    nx.draw_networkx_edges(
+        simple, pos, edgelist=target_edges, ax=ax, edge_color=TARGET_COLOR, width=2.5
+    )
+    nodes = list(simple.nodes(data=True))
+    nx.draw_networkx_nodes(
+        simple,
+        pos,
+        nodelist=[n for n, _ in nodes],
+        node_color=[
+            NODE_COLORS.get(d.get("entity_type", ""), DEFAULT_NODE_COLOR) for _, d in nodes
+        ],
+        node_size=[420 if d.get("is_target") else 160 for _, d in nodes],
+        edgecolors=[TARGET_COLOR if d.get("is_target") else "white" for _, d in nodes],
+        linewidths=[2.0 if d.get("is_target") else 0.5 for _, d in nodes],
+        ax=ax,
+    )
+    label_offset = 0.09  # place target labels below their markers (layout units)
+    nx.draw_networkx_labels(
+        simple,
+        {n: (x, y - label_offset) for n, (x, y) in pos.items()},
+        labels={n: d.get("label", n) for n, d in nodes if d.get("is_target")},
+        font_size=7,
+        ax=ax,
+    )
+
+    decision = "flagged" if risk_score >= threshold else "not flagged"
+    ax.set_title(
+        f"Transaction {target_tx_id}: {model_name}\n"
+        f"score {risk_score:.4f}, threshold {threshold:.4f} ({decision}). "
+        "Causal 2-hop neighborhood: only transactions before this one.",
+        fontsize=9,
+    )
+    legend = [
+        Line2D([0], [0], marker="o", color="w", markerfacecolor=c, markersize=8, label=t)
+        for t, c in NODE_COLORS.items()
+    ] + [Line2D([0], [0], color=TARGET_COLOR, lw=2.5, label="target transaction")]
+    ax.legend(handles=legend, loc="upper right", fontsize=7, frameon=False)
+    if post_hoc_fraud_type is not None:
+        ax.text(
+            0.01,
+            0.01,
+            f"POST-HOC AUDIT ONLY, not a model input: ground truth = {post_hoc_fraud_type}",
+            transform=ax.transAxes,
+            fontsize=7,
+            color=TARGET_COLOR,
+            bbox={"boxstyle": "round", "facecolor": "white", "edgecolor": TARGET_COLOR},
+        )
+    ax.set_axis_off()
+    fig.tight_layout()
+    out = Path(output_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out, dpi=dpi)
+    plt.close(fig)
+    return out

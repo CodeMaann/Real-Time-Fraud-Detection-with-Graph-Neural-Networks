@@ -1,0 +1,12 @@
+# ── Retraining time estimate (scripts/time_training_batches.py) ────────
+# Times real HeteroGAT training steps with the fixed (isolate_targets) loader. No model is
+# saved and nothing is logged to MLflow.
+
+gnn_config: configs/hetero_gat.yaml   # architecture, batch size, optimizer settings
+conv_type: pna                        # as in the binding run f1303c5a
+use_device_ip: true
+device: cpu                           # cpu, cuda or auto
+train_batches: 100                    # timed training steps (forward + backward + step)
+val_batches: 20                       # timed validation batches (eval mode)
+epochs: 30                            # estimate horizon (max epochs; patience may stop earlier)
+results_out: data/processed/training_timing.json

@@ -34,7 +34,7 @@ from fraudgnn.config import load_baseline_config, load_gnn_config
 from fraudgnn.data.features import compute_tabular_features, get_feature_column_names
 from fraudgnn.explain.gnn_explainer import HeteroGATExplainer
 from fraudgnn.explain.reason_codes import build_reason_codes
-from fraudgnn.explain.viz import render_causal_neighborhood_html
+from fraudgnn.explain.viz import render_causal_neighborhood_html, render_neighborhood_png
 from fraudgnn.explain.xgb_explainer import XGBoostExplainer
 from fraudgnn.graph.temporal_loader import CausalLinkNeighborLoader
 
@@ -186,6 +186,17 @@ def write_readme(
             )
         md.append("")
 
+    png_cfg = exp_cfg.get("ring_png")
+    if png_cfg:
+        md += [
+            "## Static example",
+            "",
+            f"![2-hop neighborhood of a flagged {png_cfg['fraud_type']} transaction]"
+            f"({Path(png_cfg['path']).name})",
+            "",
+            "The fraud type is a post-hoc label shown for auditing only; it is not a model input.",
+            "",
+        ]
     md += ["## One example per model and fraud type", ""]
     for key, per_type in examples.items():
         for ft, ex in per_type.items():
@@ -363,9 +374,32 @@ def main(argv: list[str] | None = None) -> int:
                         post_hoc_fraud_type=ft,
                         is_fraud_ground_truth=True,
                         model_name=entry["name"],
+                        cdn_resources=exp_cfg["viz_resources"],
                     )
-                examples[key][ft] = {"tx_id": ex["tx_id"], "reasons": ex["reasons"], "html": html}
+                examples[key][ft] = {
+                    "tx_id": ex["tx_id"],
+                    "reasons": ex["reasons"],
+                    "html": html,
+                    "score": ex["score_explained"],
+                    "threshold": threshold,
+                }
 
+    png_cfg = exp_cfg.get("ring_png")
+    if png_cfg:
+        ex = examples[png_cfg["model"]][png_cfg["fraud_type"]]
+        render_neighborhood_png(
+            df=df_raw,
+            target_tx_id=ex["tx_id"],
+            output_path=png_cfg["path"],
+            model_name=model_names[png_cfg["model"]],
+            risk_score=ex["score"],
+            threshold=ex["threshold"],
+            post_hoc_fraud_type=png_cfg["fraud_type"],
+            width_in=png_cfg["width_in"],
+            height_in=png_cfg["height_in"],
+            dpi=png_cfg["dpi"],
+            layout_seed=png_cfg["layout_seed"],
+        )
     write_readme(out_dir, exp_cfg, model_names, summaries, examples)
     Path(exp_cfg["results_out"]).write_text(
         json.dumps({"summaries": summaries, "cases": records}, indent=2, default=str),

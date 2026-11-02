@@ -1,0 +1,48 @@
+# ── HeteroGAT retraining on Google Colab (T4 GPU) ─────────────────────
+# Same model and training settings as hetero_gat.yaml with --conv-type pna (the device/IP
+# binding run), retrained with the fixed loader (isolated per-target subgraphs).
+# Paths: data copied from Drive to local disk, run folder local (MLflow + logs), resume state
+# on Google Drive so a disconnected session can continue with --resume.
+
+data_dir: /content/data/processed
+raw_data_path: /content/data/raw/transactions.parquet
+
+model:
+  model_type: hetero_gat
+  conv_type: pna
+  hidden_dim: 64
+  num_layers: 2
+  heads: 4
+  dropout: 0.2
+  use_edge_attr: true
+  use_device_ip: true
+  edge_dim: 27
+
+training:
+  epochs: 30
+  batch_size: 2048
+  micro_batch_size: 512        # forward/backward chunk on the GPU; raise to 1024 if memory allows
+  learning_rate: 0.001
+  weight_decay: 0.00001
+  patience: 5
+  seed: 42
+  gradient_clip_val: 1.0
+  lr_scheduler_factor: 0.5
+  lr_scheduler_patience: 2
+  loss_type: weighted_bce
+  focal_gamma: 2.0
+  focal_alpha: 0.75
+  pos_weight: null
+  num_neighbors:
+    - 10
+    - 10
+  model_save_path: models/best_hetero_gat_isolated.pt   # file name stem only
+  best_model_dir: /content/run/models
+  checkpoint_path: /content/drive/MyDrive/fraudgnn/checkpoints/hetero_gat_pna_isolated_state.pt
+  deterministic: false
+  mlflow_tracking_uri: sqlite:////content/run/mlflow.db
+  mlflow_experiment_name: fraud-gnn-hetero-gat-colab
+
+cost:
+  review_cost: 10.0
+  default_fraud_amount: 500.0

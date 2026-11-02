@@ -18,6 +18,7 @@ model:
 training:
   epochs: 30
   batch_size: 2048
+  micro_batch_size: 512        # forward/backward chunk; gradients accumulated to batch_size
   learning_rate: 0.001
   weight_decay: 0.00001
   patience: 5

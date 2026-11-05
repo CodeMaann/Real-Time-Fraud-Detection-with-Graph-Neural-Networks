@@ -21,7 +21,7 @@ ENV/
 *.swo
 *~
 .DS_Store
-CLAUDE.md 
+CLAUDE.md
 
 # ── Testing / Linting ────────────────────────────────────────────────
 .pytest_cache/

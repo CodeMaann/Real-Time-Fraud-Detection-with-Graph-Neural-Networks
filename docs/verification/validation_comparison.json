@@ -1,0 +1,97 @@
+{
+  "validation_rows": 98818,
+  "positives": 723,
+  "models": [
+    {
+      "key": "xgb_tab",
+      "name": "XGBoost (Tabular Baseline)",
+      "run_id": "efa4ea293a6b4226b26eac7e62d972b6",
+      "status": "scored",
+      "val_pr_auc": 0.3190278042384415,
+      "ci": [
+        0.28356553915677857,
+        0.35854579698311495
+      ],
+      "val_recall_at_1pct_fpr": 0.42738589211618255,
+      "checkpoint": "models/xgboost_baseline.json",
+      "checkpoint_sha256": "e49764a264eb4c999a21c6fd7ede58b1ad880dbef0c94a11a852555cdb2507e9",
+      "seconds": 20.14527970000927,
+      "logged_as": "val_pr_auc_rescored"
+    },
+    {
+      "key": "mlp",
+      "name": "Plain MLP (Edge Features Only)",
+      "run_id": "6c0a0d5625de4e81a4697ba0e73f6897",
+      "status": "not run (no saved model; would need retraining)"
+    },
+    {
+      "key": "xgb_lf",
+      "name": "XGBoost + Label-Free Graph Features",
+      "run_id": "9834e7c546ad4da3b49c2cb12715300f",
+      "status": "scored",
+      "val_pr_auc": 0.6498887637729316,
+      "ci": [
+        0.6146472135470105,
+        0.6851340029246283
+      ],
+      "val_recall_at_1pct_fpr": 0.7579529737206085,
+      "checkpoint": "models/xgboost_label_free.json",
+      "checkpoint_sha256": "6cec77cdbb57984496c671ce94520cbb6691120fe0b21ed74267dbda9447f069",
+      "seconds": 26.711927500000456,
+      "logged_as": "val_pr_auc_rescored"
+    },
+    {
+      "key": "xgb_oracle",
+      "name": "XGBoost + Hand-Made Graph Features (Oracle, uses past labels)",
+      "run_id": "c6ab22d40a7e452d990c8a75f57cb6aa",
+      "status": "not run (no saved model; would need retraining)"
+    },
+    {
+      "key": "gat_bind_shared",
+      "name": "HeteroGAT binding, trained on shared batches, scored shared (as at training)",
+      "run_id": "f1303c5a5e2549b38704bb8bbbcdd028",
+      "status": "scored",
+      "val_pr_auc": 0.5144311187568734,
+      "ci": [
+        0.47783743289979225,
+        0.5559400600688167
+      ],
+      "val_recall_at_1pct_fpr": 0.6348547717842323,
+      "checkpoint": "models/best_hetero_gat_pna_causal.pt",
+      "checkpoint_sha256": "49448fd8804e6cdd35f28bfc8c34fb02aefcaa8d76684eb54c2c625e86a5e14d",
+      "seconds": 69.78796940000029,
+      "logged_as": "val_pr_auc_rescored_shared"
+    },
+    {
+      "key": "gat_bind_isolated",
+      "name": "HeteroGAT binding, trained on shared batches, scored isolated",
+      "run_id": "f1303c5a5e2549b38704bb8bbbcdd028",
+      "status": "scored",
+      "val_pr_auc": 0.43626609815450035,
+      "ci": [
+        0.39752292955759666,
+        0.47877132114904336
+      ],
+      "val_recall_at_1pct_fpr": 0.5684647302904564,
+      "checkpoint": "models/best_hetero_gat_pna_causal.pt",
+      "checkpoint_sha256": "49448fd8804e6cdd35f28bfc8c34fb02aefcaa8d76684eb54c2c625e86a5e14d",
+      "seconds": 283.6776272999996,
+      "logged_as": "val_pr_auc_rescored"
+    },
+    {
+      "key": "gat_colab",
+      "name": "HeteroGAT binding, trained on isolated batches (Colab), scored isolated",
+      "run_id": null,
+      "status": "scored",
+      "val_pr_auc": 0.7973317229950165,
+      "ci": [
+        0.764971931105324,
+        0.8266378796941587
+      ],
+      "val_recall_at_1pct_fpr": 0.8838174273858921,
+      "checkpoint": "models/best_hetero_gat_pna_isolated_colab.pt",
+      "checkpoint_sha256": "d3eb2858051ddbf3e0cbcdfcdaf264d198b1a9beef05ee464ee35aa278d53219",
+      "seconds": 298.1972586000047
+    }
+  ]
+}

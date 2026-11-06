@@ -1,0 +1,214 @@
+{
+  "config": {
+    "eval_config": "configs/evaluate.yaml",
+    "models": [
+      "gat_nobind",
+      "gat_bind"
+    ],
+    "batch_sizes": [
+      1,
+      16,
+      128,
+      2048
+    ],
+    "seed": 42,
+    "negatives_per_split": 20000,
+    "target_fpr": 0.01,
+    "bootstrap_iterations": 500,
+    "bootstrap_alpha": 0.05,
+    "isolated_chunk": 2048,
+    "results_out": "data/processed/batch_leak.json"
+  },
+  "models": {
+    "gat_nobind": {
+      "name": "HeteroGAT (PNA, Causal, Without Device/IP Binding)",
+      "batch_sizes": {
+        "1": {
+          "val_threshold_at_fpr": 0.9890689253807068,
+          "test_recall_at_val_thr": 0.26322263222632225,
+          "test_fpr_at_val_thr": 0.0097,
+          "seconds": 73.32815899999696,
+          "pr_auc_subset": 0.3477224748121937,
+          "pr_auc_subset_ci": [
+            0.3134085206865581,
+            0.3800687228797771
+          ],
+          "pr_auc_weighted": 0.1724455269951328,
+          "pr_auc_weighted_ci": [
+            0.14281932970611913,
+            0.20320290242639624
+          ],
+          "diff_vs_ref": 0.0,
+          "diff_vs_ref_ci": [
+            0.0,
+            0.0
+          ]
+        },
+        "16": {
+          "val_threshold_at_fpr": 0.9886819124221802,
+          "test_recall_at_val_thr": 0.26199261992619927,
+          "test_fpr_at_val_thr": 0.0096,
+          "seconds": 472.5036834999919,
+          "pr_auc_subset": 0.35241054404990185,
+          "pr_auc_subset_ci": [
+            0.31792503880981654,
+            0.3850794056321998
+          ],
+          "pr_auc_weighted": 0.17905461651826973,
+          "pr_auc_weighted_ci": [
+            0.14790570511358603,
+            0.20986084485497383
+          ],
+          "diff_vs_ref": 0.006609089523136935,
+          "diff_vs_ref_ci": [
+            0.0035126553688677063,
+            0.009932176877545015
+          ]
+        },
+        "128": {
+          "val_threshold_at_fpr": 0.9791233539581299,
+          "test_recall_at_val_thr": 0.2952029520295203,
+          "test_fpr_at_val_thr": 0.0108,
+          "seconds": 189.14263909999863,
+          "pr_auc_subset": 0.38878248870842297,
+          "pr_auc_subset_ci": [
+            0.35330306920773785,
+            0.42339120126645696
+          ],
+          "pr_auc_weighted": 0.21187445007585687,
+          "pr_auc_weighted_ci": [
+            0.18013967622915375,
+            0.24472658167041242
+          ],
+          "diff_vs_ref": 0.03942892308072407,
+          "diff_vs_ref_ci": [
+            0.029368390268411707,
+            0.04903970795911604
+          ]
+        },
+        "2048": {
+          "val_threshold_at_fpr": 0.8636652827262878,
+          "test_recall_at_val_thr": 0.34317343173431736,
+          "test_fpr_at_val_thr": 0.008,
+          "seconds": 44.474060599997756,
+          "pr_auc_subset": 0.47477823396890956,
+          "pr_auc_subset_ci": [
+            0.4384517046423491,
+            0.5083999050405237
+          ],
+          "pr_auc_weighted": 0.2881175342692089,
+          "pr_auc_weighted_ci": [
+            0.2527826529661488,
+            0.3238534332176475
+          ],
+          "diff_vs_ref": 0.11567200727407609,
+          "diff_vs_ref_ci": [
+            0.09237104251795733,
+            0.13985594854117217
+          ]
+        }
+      }
+    },
+    "gat_bind": {
+      "name": "HeteroGAT (PNA, Causal, With Device/IP Binding)",
+      "batch_sizes": {
+        "1": {
+          "val_threshold_at_fpr": 0.9823215007781982,
+          "test_recall_at_val_thr": 0.5940959409594095,
+          "test_fpr_at_val_thr": 0.0123,
+          "seconds": 78.1073849999957,
+          "pr_auc_subset": 0.6689042709085724,
+          "pr_auc_subset_ci": [
+            0.6366790735383949,
+            0.69714126158975
+          ],
+          "pr_auc_weighted": 0.46848747150395886,
+          "pr_auc_weighted_ci": [
+            0.4270525537541347,
+            0.5109705118708104
+          ],
+          "diff_vs_ref": 0.0,
+          "diff_vs_ref_ci": [
+            0.0,
+            0.0
+          ]
+        },
+        "16": {
+          "val_threshold_at_fpr": 0.9828112125396729,
+          "test_recall_at_val_thr": 0.5731857318573186,
+          "test_fpr_at_val_thr": 0.01195,
+          "seconds": 531.2898692999879,
+          "pr_auc_subset": 0.6513942778128372,
+          "pr_auc_subset_ci": [
+            0.6198708050491663,
+            0.6809904624657741
+          ],
+          "pr_auc_weighted": 0.4542794563645949,
+          "pr_auc_weighted_ci": [
+            0.4147536103899542,
+            0.4959813160247985
+          ],
+          "diff_vs_ref": -0.014208015139363983,
+          "diff_vs_ref_ci": [
+            -0.028806308939240303,
+            0.00038787459612832603
+          ]
+        },
+        "128": {
+          "val_threshold_at_fpr": 0.9445067048072815,
+          "test_recall_at_val_thr": 0.6482164821648216,
+          "test_fpr_at_val_thr": 0.0098,
+          "seconds": 222.86664710000332,
+          "pr_auc_subset": 0.7366441952552916,
+          "pr_auc_subset_ci": [
+            0.7074161628681198,
+            0.763051847623786
+          ],
+          "pr_auc_weighted": 0.5961642474404026,
+          "pr_auc_weighted_ci": [
+            0.5590189210103367,
+            0.6339947825101421
+          ],
+          "diff_vs_ref": 0.12767677593644378,
+          "diff_vs_ref_ci": [
+            0.09815344499521625,
+            0.15694741725509156
+          ]
+        },
+        "2048": {
+          "val_threshold_at_fpr": 0.827519953250885,
+          "test_recall_at_val_thr": 0.5781057810578106,
+          "test_fpr_at_val_thr": 0.0068,
+          "seconds": 52.94272799999453,
+          "pr_auc_subset": 0.6936136632720006,
+          "pr_auc_subset_ci": [
+            0.6614883765954774,
+            0.7232178472357494
+          ],
+          "pr_auc_weighted": 0.5374162621021422,
+          "pr_auc_weighted_ci": [
+            0.4983854761523277,
+            0.574829614740483
+          ],
+          "diff_vs_ref": 0.06892879059818335,
+          "diff_vs_ref_ci": [
+            0.03395522482380745,
+            0.10980695491280407
+          ]
+        }
+      }
+    }
+  },
+  "subset": {
+    "val": {
+      "positives": 723,
+      "negatives": 20000,
+      "negative_weight": 4.90475
+    },
+    "test": {
+      "positives": 813,
+      "negatives": 20000,
+      "negative_weight": 4.9898
+    }
+  }
+}

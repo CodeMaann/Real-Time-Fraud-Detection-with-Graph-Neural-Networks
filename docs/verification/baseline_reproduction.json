@@ -1,0 +1,45 @@
+{
+  "oracle": {
+    "run_id": "c6ab22d40a7e452d990c8a75f57cb6aa",
+    "original_test_pr_auc": 0.6855433495968424,
+    "original_ci": [
+      0.656709547021236,
+      0.7114299527017466
+    ],
+    "retrained_test_pr_auc": 0.6855433495968424,
+    "difference": 0.0,
+    "reproduced": true,
+    "val_pr_auc": 0.6936843493786443,
+    "val_ci": [
+      0.6588053839854744,
+      0.7268970695439547
+    ],
+    "val_recall_at_1pct_fpr": 0.7842323651452282,
+    "model": "models\\xgboost_oracle_retrained.json",
+    "model_sha256": "cd726219e052e5a8f7a5ab97769655c7c9830eebc49afbba7935a1b1fe6c6c8d",
+    "logged_as": "val_pr_auc_rescored",
+    "seconds": 65.42541500000516
+  },
+  "mlp": {
+    "run_id": "6c0a0d5625de4e81a4697ba0e73f6897",
+    "original_test_pr_auc": 0.23379224532788137,
+    "original_ci": [
+      0.2056516240042758,
+      0.2634864569918246
+    ],
+    "retrained_test_pr_auc": 0.23379224532788137,
+    "difference": 0.0,
+    "reproduced": true,
+    "val_pr_auc": 0.1858949536726512,
+    "val_ci": [
+      0.15934763311123457,
+      0.21611227851007622
+    ],
+    "val_recall_at_1pct_fpr": 0.2793914246196404,
+    "model": "models\\mlp_edge_features_retrained.pt",
+    "model_sha256": "4cdcb856cd7d02656e54b4e2907e91d44499d47c2d5d6030cb4b65ef64c9abc7",
+    "logged_as": "val_pr_auc_rescored",
+    "best_epoch": 30,
+    "seconds": 175.82660040000337
+  }
+}

@@ -1,0 +1,138 @@
+{
+  "config": {
+    "eval_config": "configs/evaluate.yaml",
+    "model": {
+      "checkpoint": "models/best_hetero_gat_pna_isolated_colab.pt",
+      "gnn_config": "configs/hetero_gat_colab.yaml",
+      "conv_type": "pna",
+      "use_device_ip": true
+    },
+    "seed": 42,
+    "brute_force": {
+      "targets": 200,
+      "tolerance": 1e-05
+    },
+    "injection": {
+      "block_size": 2048,
+      "batch_sizes": [
+        1,
+        2,
+        64,
+        2048
+      ],
+      "amount_scale": 1000.0
+    },
+    "results_out": "data/processed/leakage_battery.json"
+  },
+  "a_brute_force": {
+    "targets": 200,
+    "structure_mismatches": 0,
+    "max_node_feature_abs_diff": 4.76837158203125e-07,
+    "max_node_feature_abs_diff_by_column": {
+      "0": 0.0,
+      "1": 0.0,
+      "2": 0.0,
+      "3": 0.0,
+      "4": 0.0,
+      "5": 4.76837158203125e-07,
+      "6": 4.76837158203125e-07,
+      "7": 0.0,
+      "8": 0.0,
+      "9": 0.0,
+      "10": 4.76837158203125e-07,
+      "11": 4.76837158203125e-07,
+      "12": 0.0,
+      "13": 0.0,
+      "14": 0.0,
+      "15": 4.76837158203125e-07,
+      "16": 4.76837158203125e-07
+    },
+    "max_score_abs_diff": 2.086162567138672e-07,
+    "mean_score_abs_diff": 5.958700319468269e-09,
+    "pass": true
+  },
+  "b_injection": {
+    "block": 2048,
+    "t_inject": 1708766820,
+    "early_targets": 1023,
+    "bs1": {
+      "early_bit_identical": true,
+      "early_max_abs_diff": 0.0,
+      "late_changed": 1002,
+      "late_targets": 1025
+    },
+    "bs2": {
+      "early_bit_identical": true,
+      "early_max_abs_diff": 0.0,
+      "late_changed": 1002,
+      "late_targets": 1025
+    },
+    "bs64": {
+      "early_bit_identical": true,
+      "early_max_abs_diff": 0.0,
+      "late_changed": 1002,
+      "late_targets": 1025
+    },
+    "bs2048": {
+      "early_bit_identical": true,
+      "early_max_abs_diff": 0.0,
+      "late_changed": 1002,
+      "late_targets": 1025
+    },
+    "legacy_shared_contrast": {
+      "early_changed": 1011,
+      "early_max_abs_diff": 0.7130535244941711
+    },
+    "pass": true
+  },
+  "c_ties": {
+    "targets": 98818,
+    "targets_with_exact_time_tie": 34,
+    "ties_by_entity": {
+      "user_id": 8,
+      "merchant_id": 26,
+      "device_id": 2,
+      "ip_address": 0
+    },
+    "subgraph_targets_checked": 98818,
+    "sampled_edges_checked": 117753416,
+    "edges_at_or_after_target_time": 0,
+    "own_edges_present": 0,
+    "pass": true
+  },
+  "d_alignment": {
+    "val": {
+      "user": 0,
+      "merchant": 0,
+      "card": 0,
+      "device": 0,
+      "ip": 0,
+      "time": 0,
+      "label": 0,
+      "rows": 98818
+    },
+    "test": {
+      "user": 0,
+      "merchant": 0,
+      "card": 0,
+      "device": 0,
+      "ip": 0,
+      "time": 0,
+      "label": 0,
+      "rows": 100609
+    },
+    "pass": true
+  },
+  "e_ablation": {
+    "full_model_compute_metrics": 0.797331672333297,
+    "full_model_ci": [
+      0.7649719245998287,
+      0.8266377336059494
+    ],
+    "targets_scored": 98818,
+    "full_model": 0.797331672333297,
+    "no_message_passing": 0.16557828801854074,
+    "no_message_passing_no_node_features": 0.09731463352666479
+  },
+  "gate_pass": true
+}

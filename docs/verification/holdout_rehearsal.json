@@ -1,0 +1,200 @@
+{
+  "scored_at": "2026-11-07T05:34:03+00:00",
+  "mode": "rehearsal on the ORIGINAL test split (freeze and run-once guards bypassed)",
+  "tolerance": 1e-06,
+  "reproduction": [
+    {
+      "key": "gnn_reference_epoch18",
+      "run_id": "3d5fa8f3a1764366866aedd1d9cd710d",
+      "expected": 0.8075942025082536,
+      "rehearsal": 0.8075942025082536,
+      "abs_diff": 0.0,
+      "pass": true
+    },
+    {
+      "key": "xgb_oracle_untuned",
+      "run_id": "c6ab22d40a7e452d990c8a75f57cb6aa",
+      "expected": 0.6855433495968424,
+      "rehearsal": 0.6855433495968424,
+      "abs_diff": 0.0,
+      "pass": true
+    },
+    {
+      "key": "xgb_lf_current",
+      "run_id": "9834e7c546ad4da3b49c2cb12715300f",
+      "expected": 0.5944983711091629,
+      "rehearsal": 0.5944983711091629,
+      "abs_diff": 0.0,
+      "pass": true
+    },
+    {
+      "key": "mlp_untuned",
+      "run_id": "6c0a0d5625de4e81a4697ba0e73f6897",
+      "expected": 0.23379224532788137,
+      "rehearsal": 0.23379224532788137,
+      "abs_diff": 0.0,
+      "pass": true
+    },
+    {
+      "key": "xgb_tab_untuned",
+      "run_id": "efa4ea293a6b4226b26eac7e62d972b6",
+      "expected": 0.3535165959244452,
+      "rehearsal": 0.3535165959244452,
+      "abs_diff": 0.0,
+      "pass": true
+    }
+  ],
+  "all_reproduced": true,
+  "models": {
+    "gnn_reference_epoch18": {
+      "checkpoint": "models/best_hetero_gat_pna_isolated_colab.pt",
+      "val_threshold_original": 0.9791143536567688,
+      "metrics": {
+        "pr_auc": 0.8075942025082536,
+        "roc_auc": 0.9868888806227435,
+        "f1": 0.7752736638763682,
+        "best_threshold": 0.9791143536567688,
+        "recall_at_1pct_fpr": 0.8597785977859779,
+        "threshold_at_1pct_fpr": 0.7017684578895569,
+        "tn": 99658,
+        "fp": 138,
+        "fn": 211,
+        "tp": 602,
+        "total_cost": 19739.976838868388,
+        "min_cost": 16578.088019680195,
+        "min_cost_threshold": 0.9009090909090909,
+        "review_cost": 10.0,
+        "avg_fraud_amount": 87.01410824108241,
+        "per_type_recall": {
+          "account_takeover": 0.8727272727272727,
+          "card_testing": 0.9923076923076923,
+          "fraud_ring": 0.9139344262295082,
+          "merchant_collusion": 0.7931034482758621,
+          "mule": 0.29107981220657275
+        },
+        "pr_auc_ci_lower": 0.7816257057843133,
+        "pr_auc_ci_upper": 0.8337435432871781
+      }
+    },
+    "xgb_oracle_untuned": {
+      "checkpoint": "models/xgboost_oracle_retrained.json",
+      "val_threshold_original": 0.8815934062004089,
+      "metrics": {
+        "pr_auc": 0.6855433495968424,
+        "roc_auc": 0.9823765142637598,
+        "f1": 0.6474820143884893,
+        "best_threshold": 0.8815934062004089,
+        "recall_at_1pct_fpr": 0.7429274292742928,
+        "threshold_at_1pct_fpr": 0.5934551358222961,
+        "tn": 99575,
+        "fp": 221,
+        "fn": 318,
+        "tp": 495,
+        "total_cost": 29880.486420664205,
+        "min_cost": 26582.343653136533,
+        "min_cost_threshold": 0.702929292929293,
+        "review_cost": 10.0,
+        "avg_fraud_amount": 87.01410824108241,
+        "per_type_recall": {
+          "account_takeover": 0.23636363636363636,
+          "card_testing": 0.7923076923076923,
+          "fraud_ring": 0.680327868852459,
+          "merchant_collusion": 0.4396551724137931,
+          "mule": 0.6995305164319249
+        },
+        "pr_auc_ci_lower": 0.656709547021236,
+        "pr_auc_ci_upper": 0.7114299527017466
+      }
+    },
+    "xgb_lf_current": {
+      "checkpoint": "models/xgboost_label_free.json",
+      "val_threshold_original": 0.7604668736457825,
+      "metrics": {
+        "pr_auc": 0.5944983711091629,
+        "roc_auc": 0.9583862580278774,
+        "f1": 0.5604900459418071,
+        "best_threshold": 0.7604668736457825,
+        "recall_at_1pct_fpr": 0.6826568265682657,
+        "threshold_at_1pct_fpr": 0.3985086977481842,
+        "tn": 99669,
+        "fp": 127,
+        "fn": 447,
+        "tp": 366,
+        "total_cost": 40165.30638376384,
+        "min_cost": 31253.809225092253,
+        "min_cost_threshold": 0.44555555555555554,
+        "review_cost": 10.0,
+        "avg_fraud_amount": 87.01410824108241,
+        "per_type_recall": {
+          "account_takeover": 0.6545454545454545,
+          "card_testing": 0.8692307692307693,
+          "fraud_ring": 0.3401639344262295,
+          "merchant_collusion": 0.4396551724137931,
+          "mule": 0.22065727699530516
+        },
+        "pr_auc_ci_lower": 0.5602506541319459,
+        "pr_auc_ci_upper": 0.6235262671245219
+      }
+    },
+    "mlp_untuned": {
+      "checkpoint": "models/mlp_edge_features_retrained.pt",
+      "val_threshold_original": 0.9079607129096985,
+      "metrics": {
+        "pr_auc": 0.23379224532788137,
+        "roc_auc": 0.8629202342766945,
+        "f1": 0.26385964912280707,
+        "best_threshold": 0.9079607129096985,
+        "recall_at_1pct_fpr": 0.2952029520295203,
+        "threshold_at_1pct_fpr": 0.847476601600647,
+        "tn": 99372,
+        "fp": 424,
+        "fn": 625,
+        "tp": 188,
+        "total_cost": 58623.81765067651,
+        "min_cost": 58500.549594095944,
+        "min_cost_threshold": 0.891010101010101,
+        "review_cost": 10.0,
+        "avg_fraud_amount": 87.01410824108241,
+        "per_type_recall": {
+          "account_takeover": 0.02727272727272727,
+          "card_testing": 0.7538461538461538,
+          "fraud_ring": 0.08196721311475409,
+          "merchant_collusion": 0.034482758620689655,
+          "mule": 0.29577464788732394
+        },
+        "pr_auc_ci_lower": 0.2056516240042758,
+        "pr_auc_ci_upper": 0.2634864569918246
+      }
+    },
+    "xgb_tab_untuned": {
+      "checkpoint": "models/xgboost_baseline.json",
+      "val_threshold_original": 0.9043859839439392,
+      "metrics": {
+        "pr_auc": 0.3535165959244452,
+        "roc_auc": 0.9395373819664686,
+        "f1": 0.36555891238670696,
+        "best_threshold": 0.9043859839439392,
+        "recall_at_1pct_fpr": 0.4218942189421894,
+        "threshold_at_1pct_fpr": 0.858624279499054,
+        "tn": 99527,
+        "fp": 269,
+        "fn": 571,
+        "tp": 242,
+        "total_cost": 52375.055805658056,
+        "min_cost": 50120.18109471095,
+        "min_cost_threshold": 0.8811111111111111,
+        "review_cost": 10.0,
+        "avg_fraud_amount": 87.01410824108241,
+        "per_type_recall": {
+          "account_takeover": 0.00909090909090909,
+          "card_testing": 0.7307692307692307,
+          "fraud_ring": 0.045081967213114756,
+          "merchant_collusion": 0.25862068965517243,
+          "mule": 0.49295774647887325
+        },
+        "pr_auc_ci_lower": 0.3200202809972404,
+        "pr_auc_ci_upper": 0.3875586887527882
+      }
+    }
+  }
+}

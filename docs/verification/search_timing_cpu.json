@@ -1,0 +1,85 @@
+{
+  "steps_timed": 6,
+  "combos": {
+    "hidden128_nn15x10": {
+      "measured_with": {
+        "learning_rate": 0.002,
+        "hidden_dim": 128,
+        "dropout": 0.3,
+        "weight_decay": 0.0001,
+        "num_neighbors": [
+          15,
+          10
+        ],
+        "loss_type": "weighted_bce"
+      },
+      "sec_per_train_step": 25.669012360007038,
+      "sec_per_val_batch": 10.846728166667162,
+      "search_steps_per_epoch": 37,
+      "full_steps_per_epoch": 147,
+      "val_batches_per_epoch": 49,
+      "micro_batch_size": 256,
+      "device": "cpu"
+    },
+    "hidden64_nn10x10": {
+      "measured_with": {
+        "learning_rate": 0.002,
+        "hidden_dim": 64,
+        "dropout": 0.1,
+        "weight_decay": 0.0001,
+        "num_neighbors": [
+          10,
+          10
+        ],
+        "loss_type": "weighted_bce"
+      },
+      "sec_per_train_step": 8.345645400002832,
+      "sec_per_val_batch": 3.592177649998727,
+      "search_steps_per_epoch": 37,
+      "full_steps_per_epoch": 147,
+      "val_batches_per_epoch": 49,
+      "micro_batch_size": 256,
+      "device": "cpu"
+    },
+    "hidden128_nn10x10": {
+      "measured_with": {
+        "learning_rate": 0.002,
+        "hidden_dim": 128,
+        "dropout": 0.1,
+        "weight_decay": 1e-05,
+        "num_neighbors": [
+          10,
+          10
+        ],
+        "loss_type": "focal"
+      },
+      "sec_per_train_step": 17.821888520003995,
+      "sec_per_val_batch": 6.805464333330747,
+      "search_steps_per_epoch": 37,
+      "full_steps_per_epoch": 147,
+      "val_batches_per_epoch": 49,
+      "micro_batch_size": 256,
+      "device": "cpu"
+    },
+    "hidden64_nn15x10": {
+      "measured_with": {
+        "learning_rate": 0.002,
+        "hidden_dim": 64,
+        "dropout": 0.2,
+        "weight_decay": 1e-05,
+        "num_neighbors": [
+          15,
+          10
+        ],
+        "loss_type": "weighted_bce"
+      },
+      "sec_per_train_step": 11.734689619997516,
+      "sec_per_val_batch": 5.2642590000032214,
+      "search_steps_per_epoch": 37,
+      "full_steps_per_epoch": 147,
+      "val_batches_per_epoch": 49,
+      "micro_batch_size": 256,
+      "device": "cpu"
+    }
+  }
+}

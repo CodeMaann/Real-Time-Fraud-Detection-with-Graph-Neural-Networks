@@ -1,0 +1,113 @@
+{
+  "created_at": "2026-11-07T04:56:29+00:00",
+  "original_rebuild": [
+    {
+      "file": "train_graph.pt",
+      "current_sha256": "e4d40a982f0fc6152fd815a920c69e9d283390642adbd566c796629a01fd45aa",
+      "rebuilt_sha256": "3ae1d7d3961eea752a1d7d55fdaff1e81c905ab62c9b361ed84221b99a081697",
+      "byte_identical": false,
+      "tensor_check": {
+        "attributes_exactly_equal": 31,
+        "allowed_differences": [
+          "card.x",
+          "device.x",
+          "ip.x",
+          "merchant.x",
+          "user.x"
+        ],
+        "added_in_rebuild": {
+          "('user', 'transacts_at', 'merchant')": [
+            "device_index",
+            "ip_index"
+          ]
+        }
+      }
+    },
+    {
+      "file": "val_graph.pt",
+      "current_sha256": "40bc58a59800a70d63935d237c3b5c048ab0b1eba49b326b74d93c8e1c400385",
+      "rebuilt_sha256": "4633ec93da02e832726c65a4b47ae540d2555c5ebef6c49b866eb4476b44b105",
+      "byte_identical": false,
+      "tensor_check": {
+        "attributes_exactly_equal": 31,
+        "allowed_differences": [
+          "card.x",
+          "device.x",
+          "ip.x",
+          "merchant.x",
+          "user.x"
+        ],
+        "added_in_rebuild": {
+          "('user', 'transacts_at', 'merchant')": [
+            "device_index",
+            "ip_index"
+          ]
+        }
+      }
+    },
+    {
+      "file": "test_graph.pt",
+      "current_sha256": "9b38992643596f8b3b8a79570e8cf8025e9d6db0c8e74467b9e698a5e16268a5",
+      "rebuilt_sha256": "2d291452a74ae1ef1592fe9bddb4ab47611ad72b26081553482ef3a91f17a341",
+      "byte_identical": false,
+      "tensor_check": {
+        "attributes_exactly_equal": 36,
+        "allowed_differences": [],
+        "added_in_rebuild": {
+          "('user', 'transacts_at', 'merchant')": [
+            "device_index",
+            "ip_index"
+          ]
+        }
+      }
+    }
+  ],
+  "holdout_seed": 20261107,
+  "data_config": "configs/data.yaml",
+  "rows": 500000,
+  "holdout_raw": {
+    "path": "data/holdout/raw/transactions.parquet",
+    "bytes": 12826463,
+    "sha256": "cd82bcd49f51cff6dbe2fec1395a9c059c920d0836cab21685f8fe206a18232d"
+  },
+  "holdout_graphs": [
+    {
+      "path": "data/holdout/processed/train_graph.pt",
+      "bytes": 92333586,
+      "sha256": "b5bfc481e0c57309bb09eba924e029de8cd6d0856c6ed3a7dfb5d350f0fac313"
+    },
+    {
+      "path": "data/holdout/processed/val_graph.pt",
+      "bytes": 122627800,
+      "sha256": "63293fd7759a3422c14b0e32e8067981fa8451542671e136386417eb19333702"
+    },
+    {
+      "path": "data/holdout/processed/test_graph.pt",
+      "bytes": 152852469,
+      "sha256": "2418eb8357140b29f2dc5e19b5b19f9846dbc7665817edb04e4044be8f3da15f"
+    }
+  ],
+  "edge_scaler": {
+    "path": "models/edge_scaler.pkl",
+    "bytes": 1064,
+    "sha256": "368b1a731948b20d677fcb64fb18dc640ad5833c0556be3b45619a2d9a22e5d2"
+  },
+  "original_graphs": [
+    {
+      "path": "data/processed/train_graph.pt",
+      "bytes": 87617168,
+      "sha256": "e4d40a982f0fc6152fd815a920c69e9d283390642adbd566c796629a01fd45aa"
+    },
+    {
+      "path": "data/processed/val_graph.pt",
+      "bytes": 115977562,
+      "sha256": "40bc58a59800a70d63935d237c3b5c048ab0b1eba49b326b74d93c8e1c400385"
+    },
+    {
+      "path": "data/processed/test_graph.pt",
+      "bytes": 144852981,
+      "sha256": "9b38992643596f8b3b8a79570e8cf8025e9d6db0c8e74467b9e698a5e16268a5"
+    }
+  ],
+  "note": "Hashes only. No metric has been computed on the holdout."
+}

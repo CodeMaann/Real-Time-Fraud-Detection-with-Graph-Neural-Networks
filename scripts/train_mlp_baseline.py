@@ -56,8 +56,24 @@ def train_and_eval_mlp(
     max_epochs: int = 30,
     patience: int = 5,
     seed: int = 42,
+    log_mlflow: bool = True,
+    save_model_path: str | None = None,
 ) -> dict[str, Any]:
-    """Train MLP on edge features and evaluate on test set."""
+    """Train MLP on edge features and evaluate on test set.
+
+    Args:
+        data_dir: Folder with the graph splits.
+        raw_data_path: Raw transactions parquet.
+        batch_size: Training batch size.
+        max_epochs: Maximum epochs.
+        patience: Early-stopping patience on validation PR-AUC.
+        seed: Torch/NumPy seed.
+        log_mlflow: Log a new MLflow run (the original behaviour).
+        save_model_path: Optional path for the best weights.
+
+    Returns:
+        Test metrics plus validation/test probabilities of the best epoch.
+    """
     torch.manual_seed(seed)
     np.random.seed(seed)
     device = torch.device("cpu")
@@ -182,12 +198,17 @@ def train_and_eval_mlp(
 
     assert best_state is not None
     model.load_state_dict(best_state)
+    if save_model_path is not None:
+        Path(save_model_path).parent.mkdir(parents=True, exist_ok=True)
+        torch.save(best_state, save_model_path)
 
     # Test Evaluation
     print("\n" + "=" * 70)
     print("  EVALUATING ON UNSEEN TEST PARTITION (Threshold from Validation)")
     print("=" * 70)
     model.eval()
+    with torch.no_grad():
+        val_probs = torch.sigmoid(model(X_val)).numpy()
     t0_score = time.perf_counter()
     with torch.no_grad():
         t_logits = model(X_test)
@@ -206,38 +227,39 @@ def train_and_eval_mlp(
         compute_ci=True,
     )
 
-    # Log to MLflow
-    mlflow.set_tracking_uri("sqlite:///mlflow.db")
-    mlflow.set_experiment("fraud-gnn-baseline")
-    with mlflow.start_run(run_name="mlp_edge_features_only") as run:
-        mlflow.log_params(
-            {
-                "model_type": "plain_mlp",
-                "epochs": max_epochs,
-                "patience": patience,
-                "batch_size": batch_size,
-                "lr": 0.001,
-                "pos_weight": pos_weight,
-                "causal": True,
-            }
-        )
-        mlflow.log_metrics(
-            {
-                "test_pr_auc": test_eval.pr_auc,
-                "test_pr_auc_ci_lower": test_eval.pr_auc_ci_lower,
-                "test_pr_auc_ci_upper": test_eval.pr_auc_ci_upper,
-                "test_roc_auc": test_eval.roc_auc,
-                "test_f1": test_eval.f1,
-                "test_recall_at_1pct_fpr": test_eval.recall_at_1pct_fpr,
-                "test_business_cost": test_eval.total_cost,
-                "val_selected_threshold": best_val_thresh,
-                "inference_latency_ms": latency_ms,
-            }
-        )
-        for ft, rec in test_eval.per_type_recall.items():
-            mlflow.log_metric(f"test_recall_{ft}", rec)
+    run_id = None
+    if log_mlflow:
+        mlflow.set_tracking_uri("sqlite:///mlflow.db")
+        mlflow.set_experiment("fraud-gnn-baseline")
+        with mlflow.start_run(run_name="mlp_edge_features_only") as run:
+            mlflow.log_params(
+                {
+                    "model_type": "plain_mlp",
+                    "epochs": max_epochs,
+                    "patience": patience,
+                    "batch_size": batch_size,
+                    "lr": 0.001,
+                    "pos_weight": pos_weight,
+                    "causal": True,
+                }
+            )
+            mlflow.log_metrics(
+                {
+                    "test_pr_auc": test_eval.pr_auc,
+                    "test_pr_auc_ci_lower": test_eval.pr_auc_ci_lower,
+                    "test_pr_auc_ci_upper": test_eval.pr_auc_ci_upper,
+                    "test_roc_auc": test_eval.roc_auc,
+                    "test_f1": test_eval.f1,
+                    "test_recall_at_1pct_fpr": test_eval.recall_at_1pct_fpr,
+                    "test_business_cost": test_eval.total_cost,
+                    "val_selected_threshold": best_val_thresh,
+                    "inference_latency_ms": latency_ms,
+                }
+            )
+            for ft, rec in test_eval.per_type_recall.items():
+                mlflow.log_metric(f"test_recall_{ft}", rec)
 
-        run_id = run.info.run_id
+            run_id = run.info.run_id
 
     print(f"Validation PR-AUC (Primary) : {best_val_pr_auc:.4f}")
     print(f"Validation Selected Thresh  : {best_val_thresh:.4f}")
@@ -271,6 +293,11 @@ def train_and_eval_mlp(
         "threshold": best_val_thresh,
         "best_epoch": best_epoch,
         "per_type_recall": test_eval.per_type_recall,
+        "val_probs": val_probs,
+        "val_amounts": val_amounts,
+        "test_probs": test_probs,
+        "y_val": y_val.numpy(),
+        "y_test": y_test.numpy(),
     }
 
 

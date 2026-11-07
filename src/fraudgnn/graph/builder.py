@@ -47,6 +47,7 @@ class TemporalGraphSplits:
     train_cutoff: pd.Timestamp
     val_cutoff: pd.Timestamp
     mappings: EntityMappings
+    edge_scaler: StandardScaler | None = None
 
 
 def extract_entity_mappings(df: pd.DataFrame) -> EntityMappings:
@@ -322,6 +323,7 @@ def build_hetero_data(
 def create_temporal_splits(
     df: pd.DataFrame,
     config: GraphConfig,
+    edge_scaler: StandardScaler | None = None,
 ) -> TemporalGraphSplits:
     """Create temporal inductive graph splits with zero future leakage.
 
@@ -338,9 +340,12 @@ def create_temporal_splits(
     Args:
         df: Chronologically sorted transactions DataFrame.
         config: GraphConfig holding split ratios and paths.
+        edge_scaler: Optional already-fitted edge-feature scaler. When given (e.g. the original
+            training-split scaler for a holdout world) it is applied to every split and never
+            refit. When None, a scaler is fitted on this dataset's training split only.
 
     Returns:
-        TemporalGraphSplits container.
+        TemporalGraphSplits container (``edge_scaler`` holds the scaler that was used).
     """
     timestamps = pd.to_datetime(df["timestamp"])
     t_min = timestamps.min()
@@ -358,7 +363,7 @@ def create_temporal_splits(
 
     # 1. Train Graph: Strictly contains ONLY train-period transactions
     train_node_feats = compute_label_free_node_features(train_df, mappings, cutoff=train_cutoff)
-    train_edge_attrs, train_scaler = compute_edge_features(train_df, scaler=None)
+    train_edge_attrs, train_scaler = compute_edge_features(train_df, scaler=edge_scaler)
     train_data = build_hetero_data(
         train_df, mappings, node_features=train_node_feats, edge_attrs=train_edge_attrs
     )
@@ -416,6 +421,7 @@ def create_temporal_splits(
         train_cutoff=train_cutoff,
         val_cutoff=val_cutoff,
         mappings=mappings,
+        edge_scaler=train_scaler,
     )
 
 

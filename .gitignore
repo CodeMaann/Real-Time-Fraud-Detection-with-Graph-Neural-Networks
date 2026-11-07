@@ -34,6 +34,7 @@ coverage.xml
 # ── Data (generated, large files) ────────────────────────────────────
 data/raw/
 data/processed/
+data/holdout/
 *.parquet
 *.csv
 !configs/*.yaml

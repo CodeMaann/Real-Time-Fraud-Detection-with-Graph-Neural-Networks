@@ -48,6 +48,7 @@ class ModelRow:
     logged_pr_auc: float | None = None
     logged_ci: tuple[float, float] | None = None
     logged_source: str = "MLflow"
+    training_batches: str = "n/a"
     overwritten_value: float | None = None
     rescored: dict[str, float] = field(default_factory=dict)
     logged: dict[str, float] = field(default_factory=dict)
@@ -104,7 +105,12 @@ def parse_training_log(path: Path) -> tuple[float, tuple[float, float] | None] |
 
 def load_row(client: MlflowClient, entry: dict[str, Any], overwritten: set[str]) -> ModelRow:
     """Collect logged and re-scored values for one configured model."""
-    row = ModelRow(key=entry["key"], name=entry["name"], run_id=entry["run_id"])
+    row = ModelRow(
+        key=entry["key"],
+        name=entry["name"],
+        run_id=entry["run_id"],
+        training_batches=entry.get("training_batches", "n/a (not a GNN)"),
+    )
     run = client.get_run(entry["run_id"])
     metrics = run.data.metrics
     row.tags = dict(run.data.tags)
@@ -122,6 +128,8 @@ def load_row(client: MlflowClient, entry: dict[str, Any], overwritten: set[str])
             row.logged_source = f"training log `{entry['training_log']}`"
         else:
             row.logged_source = "overwritten"
+    elif "test_pr_auc" not in metrics and "stopped_note" in row.tags:
+        row.logged_source = "stopped"
     elif "test_pr_auc" in metrics:
         row.logged_pr_auc = metrics["test_pr_auc"]
         if "test_pr_auc_ci_lower" in metrics and "test_pr_auc_ci_upper" in metrics:
@@ -139,6 +147,8 @@ def fmt_pr(value: float | None, ci: tuple[float, float] | None) -> str:
 def fmt_logged(row: ModelRow) -> str:
     """Format the training-time PR-AUC cell."""
     if row.logged_pr_auc is None:
+        if row.logged_source == "stopped":
+            return "n/a (run stopped before its test step)"
         return "overwritten, not recoverable" if row.logged_source == "overwritten" else NOT_RUN
     cell = fmt_pr(row.logged_pr_auc, row.logged_ci)
     return f"{cell} (log)" if row.logged_source.startswith("training log") else cell
@@ -176,30 +186,101 @@ def ci_overlap(a: tuple[float, float] | None, b: tuple[float, float] | None) -> 
 
 
 def paired_bootstrap(
-    predictions_path: Path, key_a: str, key_b: str, n_iter: int, seed: int, alpha: float
-) -> dict[str, float] | None:
-    """Paired bootstrap of PR-AUC(a) - PR-AUC(b) on identical test resamples."""
+    predictions_path: Path,
+    pairs: list[list[str]],
+    n_iter: int,
+    seed: int,
+    alpha: float,
+) -> list[dict[str, Any]]:
+    """Paired bootstrap of PR-AUC(a) - PR-AUC(b) for several pairs on the SAME test resamples."""
     if not predictions_path.exists():
-        return None
+        return []
     with np.load(predictions_path) as data:
-        if key_a not in data.files or key_b not in data.files:
-            return None
-        y, pa, pb = data["y_true"], data[key_a], data[key_b]
+        y = data["y_true"]
+        preds = {k: data[k] for k in data.files}
+    usable = [pair for pair in pairs if pair[0] in preds and pair[1] in preds]
     rng = np.random.default_rng(seed)
-    diffs = []
-    for _ in range(n_iter):
-        idx = rng.integers(0, len(y), size=len(y))
-        if y[idx].sum() == 0:
-            continue
-        diffs.append(
-            average_precision_score(y[idx], pa[idx]) - average_precision_score(y[idx], pb[idx])
+    draws = [rng.integers(0, len(y), size=len(y)) for _ in range(n_iter)]
+    draws = [idx for idx in draws if y[idx].sum() > 0]
+    results = []
+    for a_key, b_key in usable:
+        pa, pb = preds[a_key], preds[b_key]
+        diffs = np.asarray(
+            [
+                average_precision_score(y[idx], pa[idx]) - average_precision_score(y[idx], pb[idx])
+                for idx in draws
+            ]
         )
-    arr = np.asarray(diffs)
-    return {
-        "point": float(average_precision_score(y, pa) - average_precision_score(y, pb)),
-        "lower": float(np.percentile(arr, 100 * alpha / 2)),
-        "upper": float(np.percentile(arr, 100 * (1 - alpha / 2))),
-    }
+        results.append(
+            {
+                "a": a_key,
+                "b": b_key,
+                "point": float(average_precision_score(y, pa) - average_precision_score(y, pb)),
+                "lower": float(np.percentile(diffs, 100 * alpha / 2)),
+                "upper": float(np.percentile(diffs, 100 * (1 - alpha / 2))),
+                "resamples": len(draws),
+            }
+        )
+    return results
+
+
+def battery_section(path: Path) -> list[str]:
+    """Verification section from ``scripts/leakage_battery.py`` results (if present)."""
+    if not path.exists():
+        return ["## Leakage battery", "", "Not run.", ""]
+    r = json.loads(path.read_text(encoding="utf-8"))
+    a, b, c, d, e = (
+        r[k] for k in ("a_brute_force", "b_injection", "c_ties", "d_alignment", "e_ablation")
+    )
+    sizes = [k for k in b if k.startswith("bs")]
+    status = "PASS" if r["gate_pass"] else "FAIL"
+    return [
+        "## Leakage battery (real validation data)",
+        "",
+        f"Generated from `{path.as_posix()}` (`scripts/leakage_battery.py`). Gate: **{status}**.",
+        "",
+        *markdown_table(
+            ["Check", "What it proves", "Result"],
+            [
+                [
+                    "a) Brute-force reference",
+                    "Loader subgraphs equal an independent rebuild after physically deleting every "
+                    "edge at/after each target's time",
+                    f"{a['targets']} targets, {a['structure_mismatches']} structure mismatches, "
+                    f"max score diff {a['max_score_abs_diff']:.2e}",
+                ],
+                [
+                    "b) Future injection",
+                    "Transactions added after a target cannot change its score, at any batch size",
+                    f"earlier targets bit-identical at batch sizes "
+                    f"{', '.join(k[2:] for k in sizes if b[k]['early_bit_identical'])}; "
+                    f"control: {b[sizes[0]]['late_changed']}/{b[sizes[0]]['late_targets']} later "
+                    "targets changed",
+                ],
+                [
+                    "c) Ties and own edges",
+                    "No sampled edge at/after its target's time; the target's own edges are absent",
+                    f"{c['sampled_edges_checked']:,} sampled edges, "
+                    f"{c['edges_at_or_after_target_time']} violations, "
+                    f"{c['own_edges_present']} own edges; {c['targets_with_exact_time_tie']} "
+                    "targets with exact-second ties (excluded by strict <)",
+                ],
+                [
+                    "d) Alignment",
+                    "Each target's user, merchant, card, device, IP, time and label match its raw row",
+                    f"val {sum(v for k, v in d['val'].items() if k != 'rows')} and test "
+                    f"{sum(v for k, v in d['test'].items() if k != 'rows')} mismatches",
+                ],
+                [
+                    "e) Message-passing ablation",
+                    "How much of the validation score depends on neighbor messages",
+                    f"full {e['full_model']:.4f}; no message passing {e['no_message_passing']:.4f} "
+                    f"({e['no_message_passing'] / e['full_model']:.1%} of full)",
+                ],
+            ],
+        ),
+        "",
+    ]
 
 
 def batch_leak_section(path: Path) -> list[str]:
@@ -275,6 +356,7 @@ def build_report(cfg: dict[str, Any]) -> tuple[str, str]:
     headers = [
         "Model",
         "Run",
+        "Training batches",
         "PR-AUC logged at training",
         "PR-AUC re-scored, shared batches (legacy, leaky)",
         "PR-AUC re-scored [95% CI]",
@@ -301,8 +383,6 @@ def build_report(cfg: dict[str, Any]) -> tuple[str, str]:
         )
         if r.tags.get("rescore_checkpoint_matches_run_artifact") == "no_artifact":
             rescored_cell += " (model file not a run artifact)"
-        if r.key.startswith("sage"):  # homogeneous loader has no isolated mode
-            rescored_cell += " (shared batches, leak not fixed)"
         shared = r.rescored.get("rescored_shared_test_pr_auc")
         shared_cell = (
             fmt_pr(
@@ -319,6 +399,7 @@ def build_report(cfg: dict[str, Any]) -> tuple[str, str]:
             [
                 r.name,
                 f"`{r.run_id[:8]}`",
+                r.training_batches,
                 fmt_logged(r),
                 shared_cell,
                 rescored_cell,
@@ -339,13 +420,16 @@ def build_report(cfg: dict[str, Any]) -> tuple[str, str]:
         "scoring is slower than shared batches. Not end-to-end serving latency.",
         "- GNN neighbor selection is deterministic (most recent k edges before the cutoff), so "
         "a sampling seed has no effect and there is no seed-to-seed range to report.",
-        "- HeteroGAT 're-scored' values use isolated per-target subgraphs "
-        "(`isolate_targets=True`): each transaction only sees edges before its own timestamp. "
-        "The 'shared batches' column scores the same checkpoint with the legacy loader, where "
-        "all targets in a batch of 2048 share one subgraph and a transaction can see edges "
-        "sampled for later transactions in the same batch. The checkpoints were trained with "
-        "the legacy loader. See 'Batch-sharing leak' below.",
-        "- GraphSAGE still uses shared batches; its homogeneous loader has no isolated mode.",
+        "- GNN 're-scored' values use isolated per-target subgraphs (`isolate_targets=True`) "
+        "and exact per-node float64 amount sums: each transaction only sees edges before its "
+        "own timestamp. The 'shared batches' column scores the same checkpoint with the legacy "
+        "loader, where all targets in a batch share one subgraph and a transaction can see "
+        "edges sampled for later transactions in the same batch.",
+        "- 'Training batches' says how the checkpoint was trained: 'shared' = leaky "
+        "shared-subgraph batches, 'isolated' = per-target subgraphs.",
+        "- The isolated-batch HeteroGAT is the epoch-18 checkpoint of a run stopped by hand at its "
+        "best epoch (max 30, patience 5, 12 epochs unused); its score is a lower bound for "
+        "that training setup.",
     ]
     for r in rows:
         if r.overwritten_value is not None:
@@ -372,19 +456,18 @@ def build_report(cfg: dict[str, Any]) -> tuple[str, str]:
                     f"- {r.name} {fmt_pr(r.best_pr_auc, r.best_ci)} vs label-free XGBoost "
                     f"{fmt_pr(lf.best_pr_auc, lf.best_ci)}: {verdict}."
                 )
-    boot = paired_bootstrap(
+    names = {r.key: r.name for r in rows}
+    for boot in paired_bootstrap(
         Path(cfg["predictions_out"]),
-        "gat_bind",
-        "xgb_lf",
+        rep["paired_bootstrap_pairs"],
         rep["bootstrap_iterations"],
         rep["bootstrap_seed"],
         rep["bootstrap_alpha"],
-    )
-    if boot is not None:
+    ):
         findings.append(
-            f"- Paired bootstrap ({rep['bootstrap_iterations']} resamples), HeteroGAT with "
-            f"binding minus label-free XGBoost: {boot['point']:+.4f} "
-            f"[{boot['lower']:+.4f}, {boot['upper']:+.4f}]."
+            f"- Paired bootstrap ({boot['resamples']} shared test resamples), "
+            f"{names.get(boot['a'], boot['a'])} minus {names.get(boot['b'], boot['b'])}: "
+            f"{boot['point']:+.4f} [{boot['lower']:+.4f}, {boot['upper']:+.4f}]."
         )
 
     md = [
@@ -406,6 +489,7 @@ def build_report(cfg: dict[str, Any]) -> tuple[str, str]:
         "",
         *(findings or ["Not run."]),
         "",
+        *battery_section(Path(rep["battery_results"])),
         *batch_leak_section(Path(rep["batch_leak_results"])),
         "## Ablations",
         "",
@@ -414,7 +498,7 @@ def build_report(cfg: dict[str, Any]) -> tuple[str, str]:
     ]
 
     readme_rows = [
-        [r.name, fmt_logged(r), row[3], row[4], row[6]]
+        [r.name, r.training_batches, fmt_logged(r), row[4], row[5], row[7]]
         for r, row in zip(rows, table_rows, strict=True)
     ]
     readme = [
@@ -422,6 +506,7 @@ def build_report(cfg: dict[str, Any]) -> tuple[str, str]:
         *markdown_table(
             [
                 "Model",
+                "Training batches",
                 "Test PR-AUC (logged)",
                 "Test PR-AUC, shared batches (legacy, leaky)",
                 "Test PR-AUC (re-scored) [95% CI]",

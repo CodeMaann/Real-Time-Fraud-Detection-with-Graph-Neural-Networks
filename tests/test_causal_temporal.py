@@ -739,3 +739,95 @@ def test_isolated_batches_match_single_target_scoring(
         return torch.cat(outs)
 
     assert torch.allclose(logits(5), logits(1), atol=1e-6)
+
+
+def test_node_amount_sum_ignores_other_nodes_edges() -> None:
+    """A node's causal amount sum must not change when other nodes gain (later) edges.
+
+    Regression test for leakage-battery check 3b: a single float32 cumulative sum over all
+    nodes' edges made one node's prefix depend, through rounding, on other nodes' amounts.
+    """
+    edge_index = torch.tensor([[0, 1, 1], [5, 6, 7]], dtype=torch.long)
+    edge_time = torch.tensor([100, 110, 120], dtype=torch.long)
+    amounts = torch.tensor([1e6, 0.1, 0.2], dtype=torch.float32)
+    clean = FastTemporalAdjacency(edge_index, edge_time, num_src_nodes=3, edge_amount=amounts)
+
+    # Huge later edges on node 0 (sorted before node 1) must not move node 1's sum at t=150.
+    big_index = torch.cat([edge_index, torch.tensor([[0, 0], [8, 9]])], dim=1)
+    big_time = torch.cat([edge_time, torch.tensor([200, 210])])
+    big_amounts = torch.cat([amounts, torch.tensor([3e9, 7e9])])
+    dirty = FastTemporalAdjacency(big_index, big_time, num_src_nodes=3, edge_amount=big_amounts)
+
+    _, _, amt_clean, _ = clean.get_causal_node_stats([1, 0], [150, 150])
+    _, _, amt_dirty, _ = dirty.get_causal_node_stats([1, 0], [150, 150])
+    assert np.array_equal(amt_clean, amt_dirty)
+    assert amt_clean[0] == np.float32(0.1 + 0.2)
+
+
+def _homo_pair_scores(
+    data: HeteroData, isolate_targets: bool, inject: bool
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """GraphSAGE: target A (t=1000) batched with later target B (t=6000) on the same user.
+
+    With ``inject`` an edge on A's user at t=3500 (after A, before B) is added.
+    Returns (A's logit in the 2-target batch, A's logit scored alone).
+    """
+    homo, _, h_idx, _ = convert_hetero_to_homogeneous(data)
+    graph = copy.deepcopy(homo)
+    if inject:
+        fake = h_idx[:, 0:1]
+        graph.edge_index = torch.cat([graph.edge_index, fake, fake.flip(0)], dim=1)
+        graph.edge_time = torch.cat([graph.edge_time, torch.tensor([3500, 3500])])
+        if getattr(graph, "edge_attr", None) is not None:
+            fake_attr = torch.zeros((2, graph.edge_attr.size(1)))
+            fake_attr[:, 0] = 1_000_000.0
+            graph.edge_attr = torch.cat([graph.edge_attr, fake_attr], dim=0)
+
+    # A = transaction 0 (user 0 -> merchant 0 at t=1000); B = user 0 -> merchant 2 at t=6000,
+    # expressed in homogeneous ids by reusing transaction 4's merchant node (merchant 2).
+    targets = torch.stack([h_idx[:, 0], torch.stack([h_idx[0, 0], h_idx[1, 4]])], dim=1)
+    torch.manual_seed(888)
+    model = GraphSAGEEdgeClassifier(
+        in_channels=8, hidden_channels=16, edge_dim=27, num_layers=2, dropout=0.0
+    )
+    model.eval()
+
+    def first_logit(batch_size: int) -> torch.Tensor:
+        loader = CausalHomogeneousLinkLoader(
+            data=graph,
+            edge_label_index=targets,
+            edge_label=torch.zeros(2),
+            edge_time=torch.tensor([1000, 6000]),
+            edge_attr=torch.zeros(2, 27),
+            batch_size=batch_size,
+            num_neighbors=[10, 10],
+            shuffle=False,
+            isolate_targets=isolate_targets,
+        )
+        batch = next(iter(loader))
+        with torch.no_grad():
+            return model(
+                x=batch.x,
+                edge_index=batch.edge_index,
+                edge_label_index=batch.edge_label_index,
+                edge_attr=batch.edge_attr,
+            )[0]
+
+    return first_logit(2), first_logit(1)
+
+
+def test_homogeneous_isolated_batches_block_later_targets(
+    synthetic_temporal_graph: HeteroData,
+) -> None:
+    """GraphSAGE isolated mode: batching with a later target cannot leak into A."""
+    clean_batched, clean_alone = _homo_pair_scores(synthetic_temporal_graph, True, False)
+    injected_batched, _ = _homo_pair_scores(synthetic_temporal_graph, True, True)
+    assert torch.equal(clean_batched, injected_batched)
+    assert torch.allclose(clean_batched, clean_alone, atol=1e-6)
+
+
+def test_homogeneous_shared_batches_still_leak(synthetic_temporal_graph: HeteroData) -> None:
+    """Contrast: the legacy shared GraphSAGE batches are affected by the post-A injection."""
+    clean_batched, _ = _homo_pair_scores(synthetic_temporal_graph, False, False)
+    injected_batched, _ = _homo_pair_scores(synthetic_temporal_graph, False, True)
+    assert not torch.equal(clean_batched, injected_batched)

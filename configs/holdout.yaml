@@ -1,0 +1,66 @@
+# ── Sealed holdout world (scripts/make_holdout.py, scripts/score_holdout.py) ──
+# A second simulated world: same generator config as the original, different seed.
+# Only its last 20% of time are scored, once, after the freeze (docs/protocol.md).
+
+data_config: configs/data.yaml          # generator settings (seed overridden below)
+graph_config: configs/graph.yaml        # split ratios (60/20/20)
+holdout_seed: 20261107
+holdout_raw: data/holdout/raw/transactions.parquet
+holdout_processed: data/holdout/processed
+original_raw: data/raw/transactions.parquet
+original_processed: data/processed
+rebuild_dir: data/holdout/rebuild_original   # deterministic rebuild of the ORIGINAL graphs
+edge_scaler_out: models/edge_scaler.pkl      # original training-split edge scaler
+manifest_out: docs/verification/holdout_manifest.json
+graph_files: [train_graph.pt, val_graph.pt, test_graph.pt]
+
+# Scoring (after the freeze only)
+freeze_file: docs/verification/freeze.json
+results_out: docs/verification/holdout_results.json
+eval_config: configs/evaluate.yaml      # original validation split for thresholds
+battery_splits: [val, test, holdout]   # every GNN checkpoint needs a passing battery on each
+battery_file_pattern: docs/verification/battery_{key}_{split}.json
+protocol_file: docs/protocol.md
+bootstrap: {iterations: 500, seed: 42, alpha: 0.05}
+
+# Models scored on the holdout (docs/protocol.md §5-§6). Final checkpoints exist after training.
+models:
+  - {key: gnn_final_seed42, kind: hetero_gat, checkpoint: models/best_hetero_gat_final_seed42_pna_causal.pt,
+     gnn_config: configs/hetero_gat_final.yaml, conv_type: pna, use_device_ip: true}
+  - {key: gnn_final_seed43, kind: hetero_gat, checkpoint: models/best_hetero_gat_final_seed43_pna_causal.pt,
+     gnn_config: configs/hetero_gat_final.yaml, conv_type: pna, use_device_ip: true}
+  - {key: gnn_final_seed44, kind: hetero_gat, checkpoint: models/best_hetero_gat_final_seed44_pna_causal.pt,
+     gnn_config: configs/hetero_gat_final.yaml, conv_type: pna, use_device_ip: true}
+  - {key: gnn_reference_epoch18, kind: hetero_gat, checkpoint: models/best_hetero_gat_pna_isolated_colab.pt,
+     gnn_config: configs/hetero_gat_colab.yaml, conv_type: pna, use_device_ip: true}
+  - {key: xgb_lf_final_seed42, kind: xgb_label_free, checkpoint: models/xgboost_label_free_final_seed42.json}
+  - {key: xgb_lf_final_seed43, kind: xgb_label_free, checkpoint: models/xgboost_label_free_final_seed43.json}
+  - {key: xgb_lf_final_seed44, kind: xgb_label_free, checkpoint: models/xgboost_label_free_final_seed44.json}
+  - {key: xgb_tab_untuned, kind: xgb_tabular, checkpoint: models/xgboost_baseline.json}
+  - {key: xgb_oracle_untuned, kind: xgb_oracle, checkpoint: models/xgboost_oracle_retrained.json}
+  - {key: mlp_untuned, kind: mlp, checkpoint: models/mlp_edge_features_retrained.pt}
+
+paired_bootstrap_pairs:        # matched seeds vs tuned XGBoost; every seed vs the oracle
+  - [gnn_final_seed42, xgb_lf_final_seed42]
+  - [gnn_final_seed43, xgb_lf_final_seed43]
+  - [gnn_final_seed44, xgb_lf_final_seed44]
+  - [gnn_final_seed42, xgb_oracle_untuned]
+  - [gnn_final_seed43, xgb_oracle_untuned]
+  - [gnn_final_seed44, xgb_oracle_untuned]
+
+rehearsal:                     # score_holdout.py --rehearse: same path on the ORIGINAL test split
+  results_out: docs/verification/holdout_rehearsal.json
+  tolerance: 1.0e-6
+  expected_metric: rescored_test_pr_auc        # each run's leak-free test re-score in MLflow
+  models:
+    - {key: gnn_reference_epoch18, kind: hetero_gat, checkpoint: models/best_hetero_gat_pna_isolated_colab.pt,
+       gnn_config: configs/hetero_gat_colab.yaml, conv_type: pna, use_device_ip: true,
+       run_id: 3d5fa8f3a1764366866aedd1d9cd710d}
+    - {key: xgb_oracle_untuned, kind: xgb_oracle, checkpoint: models/xgboost_oracle_retrained.json,
+       run_id: c6ab22d40a7e452d990c8a75f57cb6aa}
+    - {key: xgb_lf_current, kind: xgb_label_free, checkpoint: models/xgboost_label_free.json,
+       run_id: 9834e7c546ad4da3b49c2cb12715300f}
+    - {key: mlp_untuned, kind: mlp, checkpoint: models/mlp_edge_features_retrained.pt,
+       run_id: 6c0a0d5625de4e81a4697ba0e73f6897}
+    - {key: xgb_tab_untuned, kind: xgb_tabular, checkpoint: models/xgboost_baseline.json,
+       run_id: efa4ea293a6b4226b26eac7e62d972b6}

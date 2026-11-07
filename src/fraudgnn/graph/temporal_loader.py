@@ -17,6 +17,7 @@ from collections.abc import Iterator
 from typing import Any
 
 import numpy as np
+import pandas as pd
 import torch
 from torch_geometric.data import Data, HeteroData
 
@@ -47,8 +48,8 @@ class FastTemporalAdjacency:
             self.dst = np.empty(0, dtype=np.int64)
             self.times = np.empty(0, dtype=np.int64)
             self.edge_ids = np.empty(0, dtype=np.int64)
-            self.amounts = np.empty(0, dtype=np.float32)
-            self.cumsum_amounts = np.zeros(1, dtype=np.float32)
+            self.amounts = np.empty(0, dtype=np.float64)
+            self.node_cum_amounts = np.empty(0, dtype=np.float64)
             self.cum_distinct = np.zeros(1, dtype=np.int64)
             return
 
@@ -58,9 +59,9 @@ class FastTemporalAdjacency:
         edge_ids = np.arange(len(src_arr), dtype=np.int64)
 
         if edge_amount is not None:
-            amt_arr = edge_amount.cpu().numpy().astype(np.float32)
+            amt_arr = edge_amount.cpu().numpy().astype(np.float64)
         else:
-            amt_arr = np.zeros(len(src_arr), dtype=np.float32)
+            amt_arr = np.zeros(len(src_arr), dtype=np.float64)
 
         # Lexsort: primary key src_arr, secondary key time_arr (ascending order)
         sort_idx = np.lexsort((time_arr, src_arr))
@@ -74,8 +75,12 @@ class FastTemporalAdjacency:
         self.ptrs = np.zeros(num_src_nodes + 1, dtype=np.int64)
         self.ptrs[1:] = np.cumsum(counts)
 
-        self.cumsum_amounts = np.zeros(len(self.amounts) + 1, dtype=np.float32)
-        self.cumsum_amounts[1:] = np.cumsum(self.amounts)
+        # Running amount sum restarted at every source node (float64). A single cumulative
+        # sum over all nodes' edges would make each node's prefix depend, through rounding,
+        # on other nodes' edges, including later ones (leakage battery check 3b).
+        self.node_cum_amounts = (
+            pd.Series(self.amounts).groupby(src_sorted).cumsum().to_numpy(dtype=np.float64)
+        )
 
         # Prefix count of distinct destinations per source: an edge counts if it is the
         # first (earliest) edge from its source to that destination.
@@ -199,8 +204,9 @@ class FastTemporalAdjacency:
         )
         deg = (end - start).astype(np.float32)
         distinct = (self.cum_distinct[end] - self.cum_distinct[start]).astype(np.float32)
-        amt = (self.cumsum_amounts[end] - self.cumsum_amounts[start]).astype(np.float32)
         has = end > start
+        amt = np.zeros(n, dtype=np.float32)
+        amt[has] = self.node_cum_amounts[end[has] - 1].astype(np.float32)
         out_first_time[has] = self.times[start[has]].astype(np.float64)
         return deg, distinct, amt, out_first_time
 
@@ -482,6 +488,9 @@ class CausalLinkNeighborLoader:
             batch[et].edge_index = torch.from_numpy(np.stack([loc_src, loc_dst]).astype(np.int64))
             if hasattr(self.data[et], "edge_time"):
                 batch[et].edge_time = self.data[et].edge_time[eids]
+            # Provenance for audits (not model inputs): original edge id and owning target.
+            batch[et].e_id = torch.from_numpy(eids.astype(np.int64))
+            batch[et].target_slot = torch.from_numpy(e_slot.astype(np.int64))
 
         # 4. Target edges in local coordinates
         def local(nt: str, ids: np.ndarray) -> torch.Tensor:
@@ -671,9 +680,21 @@ class CausalHomogeneousLinkLoader:
     Sampled neighbors satisfy edge_time < t for the target that sampled them, with dynamic
     causal node features.
 
-    Known limitation: targets in a batch share one induced subgraph (no ``isolate_targets``
-    option yet, unlike ``CausalLinkNeighborLoader``), so edges sampled for a later target
-    can reach an earlier target's embedding. GraphSAGE scores at batch size > 1 include it.
+    Args:
+        data: Homogeneous graph.
+        edge_label_index: Target edges (local to ``data``).
+        edge_label: Target labels.
+        edge_time: Target timestamps.
+        edge_attr: Optional target edge attributes.
+        batch_size: Targets per batch.
+        num_neighbors: Sample limits per hop.
+        shuffle: Whether to shuffle target edges.
+        seed: Seed for the shuffle permutation (neighbor selection is deterministic).
+        compute_causal_node_features: Whether to compute the 8-dim causal node features.
+        isolate_targets: If True (default), each target gets its own subgraph and node
+            features with its own timestamp as cutoff, so a batched score equals scoring the
+            target alone. If False, all targets in a batch share one induced subgraph
+            (legacy behaviour, kept to reproduce earlier GraphSAGE numbers).
     """
 
     def __init__(
@@ -688,6 +709,7 @@ class CausalHomogeneousLinkLoader:
         shuffle: bool = True,
         seed: int | None = 42,
         compute_causal_node_features: bool = True,
+        isolate_targets: bool = True,
     ) -> None:
         self.data = data
         self.batch_size = batch_size
@@ -696,14 +718,20 @@ class CausalHomogeneousLinkLoader:
         self.seed = seed
         self.rng = np.random.default_rng(seed)
         self.compute_causal_node_features = compute_causal_node_features
+        self.isolate_targets = isolate_targets
 
         self.target_edge_index = edge_label_index
         self.edge_label = edge_label
         self.edge_time = edge_time
         self.edge_attr = edge_attr
         self.num_edges = self.target_edge_index.size(1)
+        self._target_src = self.target_edge_index[0].cpu().numpy().astype(np.int64)
+        self._target_dst = self.target_edge_index[1].cpu().numpy().astype(np.int64)
+        self._labels = edge_label.cpu().numpy()
+        self._times = edge_time.cpu().numpy().astype(np.int64)
+        self._attr = edge_attr.cpu().numpy() if edge_attr is not None else None
 
-        n_nodes = data.x.size(0)
+        self.n_nodes = int(data.x.size(0))
         e_time = getattr(data, "edge_time", None)
         if e_time is None:
             e_time = torch.zeros(data.edge_index.size(1), dtype=torch.long)
@@ -719,7 +747,7 @@ class CausalHomogeneousLinkLoader:
         self.adj = FastTemporalAdjacency(
             edge_index=data.edge_index,
             edge_time=e_time,
-            num_src_nodes=n_nodes,
+            num_src_nodes=self.n_nodes,
             edge_amount=e_amt,
         )
 
@@ -728,123 +756,197 @@ class CausalHomogeneousLinkLoader:
 
     def __iter__(self) -> Iterator[Data]:
         perm = self.rng.permutation(self.num_edges) if self.shuffle else np.arange(self.num_edges)
-
-        target_src_all = self.target_edge_index[0].cpu().numpy()
-        target_dst_all = self.target_edge_index[1].cpu().numpy()
-        labels_all = self.edge_label.cpu().numpy()
-        times_all = self.edge_time.cpu().numpy()
-        attr_all = self.edge_attr.cpu().numpy() if self.edge_attr is not None else None
-
         for start_idx in range(0, self.num_edges, self.batch_size):
-            batch_indices = perm[start_idx : start_idx + self.batch_size]
+            yield self.build_batch(perm[start_idx : start_idx + self.batch_size])
 
-            b_src = target_src_all[batch_indices]
-            b_dst = target_dst_all[batch_indices]
-            b_labels = labels_all[batch_indices]
-            b_times = times_all[batch_indices]
-            b_attr = attr_all[batch_indices] if attr_all is not None else None
+    def build_batch(self, batch_indices: np.ndarray) -> Data:
+        """Build the mini-batch for the given target positions (isolated or shared)."""
+        batch_indices = np.asarray(batch_indices, dtype=np.int64)
+        if self.isolate_targets:
+            return self._build_isolated(batch_indices)
+        return self._build_shared(batch_indices)
 
-            sampled_nodes = set(b_src) | set(b_dst)
-            sampled_eids: list[np.ndarray] = []
+    def _node_features(self, nodes: np.ndarray, cuts: np.ndarray) -> np.ndarray:
+        """8-dim causal node features: bias, distinct neighbors, degree, amount, age."""
+        d, dist, a, ft = self.adj.get_causal_node_stats(nodes, cuts)
+        ages_hours = np.zeros(len(nodes), dtype=np.float32)
+        has_prior = ft < np.inf
+        ages_hours[has_prior] = np.maximum(
+            0.0,
+            (cuts[has_prior] - ft[has_prior]) / 3600.0,
+        )
+        feats = np.zeros((len(nodes), 8), dtype=np.float32)
+        feats[:, 0] = 1.0
+        feats[:, 1] = np.log1p(dist)
+        feats[:, 5] = np.log1p(d)
+        feats[:, 6] = np.log1p(np.maximum(0.0, a))
+        feats[:, 7] = np.log1p(ages_hours)
+        return feats
 
-            frontier_nodes: list[int] = list(b_src) + list(b_dst)
-            frontier_times: list[int] = list(b_times) + list(b_times)
-            node_cutoffs: dict[int, int] = {}
+    def _finish(
+        self, batch: Data, batch_indices: np.ndarray, loc_src: np.ndarray, loc_dst: np.ndarray
+    ) -> Data:
+        """Attach target edges, labels, times and attributes."""
+        batch.edge_label_index = torch.from_numpy(np.stack([loc_src, loc_dst]).astype(np.int64))
+        batch.edge_label = torch.from_numpy(self._labels[batch_indices]).to(dtype=torch.float32)
+        batch.edge_time = torch.from_numpy(self._times[batch_indices])
+        if self._attr is not None:
+            batch.edge_attr = torch.from_numpy(self._attr[batch_indices]).to(dtype=torch.float32)
+        batch.batch_size = len(batch_indices)
+        return batch
 
-            for u_id, t_cut in zip(b_src, b_times, strict=False):
-                u_int = int(u_id)
-                t_int = int(t_cut)
-                if u_int not in node_cutoffs or t_int < node_cutoffs[u_int]:
-                    node_cutoffs[u_int] = t_int
-            for v_id, t_cut in zip(b_dst, b_times, strict=False):
-                v_int = int(v_id)
-                t_int = int(t_cut)
-                if v_int not in node_cutoffs or t_int < node_cutoffs[v_int]:
-                    node_cutoffs[v_int] = t_int
+    def _build_isolated(self, batch_indices: np.ndarray) -> Data:
+        """One independent subgraph per target, keyed by (target slot, node id)."""
+        n = self.n_nodes
+        n_e = self.data.edge_index.size(1)
+        slots = np.arange(len(batch_indices), dtype=np.int64)
+        b_times = self._times[batch_indices]
+        b_src = self._target_src[batch_indices]
+        b_dst = self._target_dst[batch_indices]
 
-            for hop_k in range(len(self.num_neighbors)):
-                k_limit = self.num_neighbors[hop_k]
-                if not frontier_nodes:
-                    continue
-
-                s_dst, s_eids, s_cuts = self.adj.sample_causal_neighbors(
-                    src_nodes=frontier_nodes,
-                    time_cutoffs=frontier_times,
-                    max_neighbors=k_limit,
-                    rng=self.rng,
-                )
-
-                next_fn: list[int] = []
-                next_ft: list[int] = []
-
-                if len(s_eids) > 0:
-                    sampled_eids.append(s_eids)
-                    for d_node, d_cut in zip(s_dst, s_cuts, strict=False):
-                        d_int = int(d_node)
-                        d_c_int = int(d_cut)
-                        if d_int not in node_cutoffs or d_c_int < node_cutoffs[d_int]:
-                            node_cutoffs[d_int] = d_c_int
-                        if d_int not in sampled_nodes:
-                            sampled_nodes.add(d_int)
-                            next_fn.append(d_int)
-                            next_ft.append(d_c_int)
-
-                frontier_nodes = next_fn
-                frontier_times = next_ft
-
-            nodes_sorted = np.array(sorted(sampled_nodes), dtype=np.int64)
-            global_to_local = {gid: lid for lid, gid in enumerate(nodes_sorted)}
-
-            batch = Data()
-            batch.num_nodes = len(nodes_sorted)
-            batch.n_id = torch.from_numpy(nodes_sorted)
-
-            if self.compute_causal_node_features:
-                def_cut = int(b_times.min()) if len(b_times) > 0 else 0
-                cuts_arr = np.array(
-                    [node_cutoffs.get(int(gid), def_cut) for gid in nodes_sorted],
-                    dtype=np.int64,
-                )
-                d, dist, a, ft = self.adj.get_causal_node_stats(nodes_sorted, cuts_arr)
-                ages_hours = np.zeros(len(nodes_sorted), dtype=np.float32)
-                has_prior = ft < np.inf
-                ages_hours[has_prior] = np.maximum(
-                    0.0,
-                    (cuts_arr[has_prior] - ft[has_prior]) / 3600.0,
-                )
-                feats = np.zeros((len(nodes_sorted), 8), dtype=np.float32)
-                feats[:, 0] = 1.0
-                feats[:, 1] = np.log1p(dist)
-                feats[:, 5] = np.log1p(d)
-                feats[:, 6] = np.log1p(np.maximum(0.0, a))
-                feats[:, 7] = np.log1p(ages_hours)
-                batch.x = torch.from_numpy(feats)
-            else:
-                batch.x = self.data.x[nodes_sorted]
-
-            if sampled_eids:
-                all_eids = np.unique(np.concatenate(sampled_eids))
-                orig_sub_src = self.data.edge_index[0, all_eids].cpu().numpy()
-                orig_sub_dst = self.data.edge_index[1, all_eids].cpu().numpy()
-
-                loc_src = np.array([global_to_local[u] for u in orig_sub_src], dtype=np.int64)
-                loc_dst = np.array([global_to_local[v] for v in orig_sub_dst], dtype=np.int64)
-                batch.edge_index = torch.stack(
-                    [torch.from_numpy(loc_src), torch.from_numpy(loc_dst)], dim=0
-                )
-            else:
-                batch.edge_index = torch.empty((2, 0), dtype=torch.long)
-
-            local_target_src = np.array([global_to_local[u] for u in b_src], dtype=np.int64)
-            local_target_dst = np.array([global_to_local[v] for v in b_dst], dtype=np.int64)
-            batch.edge_label_index = torch.stack(
-                [torch.from_numpy(local_target_src), torch.from_numpy(local_target_dst)],
-                dim=0,
+        sampled = np.unique(np.concatenate([slots * n + b_src, slots * n + b_dst]))
+        frontier = sampled
+        edge_keys: list[np.ndarray] = []
+        for k_limit in self.num_neighbors:
+            if len(frontier) == 0:
+                continue
+            f_slot = frontier // n
+            dst, eids, row = self.adj.sample_causal_neighbors_indexed(
+                frontier % n, b_times[f_slot], k_limit
             )
-            batch.edge_label = torch.from_numpy(b_labels).to(dtype=torch.float32)
-            batch.edge_time = torch.from_numpy(b_times)
-            if b_attr is not None:
-                batch.edge_attr = torch.from_numpy(b_attr).to(dtype=torch.float32)
-            batch.batch_size = len(batch_indices)
+            if len(eids) == 0:
+                frontier = np.empty(0, dtype=np.int64)
+                continue
+            e_slot = f_slot[row]
+            edge_keys.append(e_slot * n_e + eids)
+            cand = np.unique(e_slot * n + dst)
+            frontier = np.setdiff1d(cand, sampled, assume_unique=True)
+            sampled = np.union1d(sampled, frontier)
 
-            yield batch
+        node_ids = sampled % n
+        batch = Data()
+        batch.num_nodes = len(sampled)
+        batch.n_id = torch.from_numpy(node_ids)
+        if self.compute_causal_node_features:
+            batch.x = torch.from_numpy(self._node_features(node_ids, b_times[sampled // n]))
+        else:
+            batch.x = self.data.x[node_ids]
+
+        if edge_keys:
+            keys = np.unique(np.concatenate(edge_keys))
+            e_slot, eids = keys // n_e, keys % n_e
+            g_src = self.data.edge_index[0, eids].cpu().numpy()
+            g_dst = self.data.edge_index[1, eids].cpu().numpy()
+            batch.edge_index = torch.from_numpy(
+                np.stack(
+                    [
+                        np.searchsorted(sampled, e_slot * n + g_src),
+                        np.searchsorted(sampled, e_slot * n + g_dst),
+                    ]
+                ).astype(np.int64)
+            )
+            # Provenance for audits (not model inputs): original edge id and owning target.
+            batch.e_id = torch.from_numpy(eids.astype(np.int64))
+            batch.target_slot = torch.from_numpy(e_slot.astype(np.int64))
+        else:
+            batch.edge_index = torch.empty((2, 0), dtype=torch.long)
+            batch.e_id = torch.empty(0, dtype=torch.long)
+            batch.target_slot = torch.empty(0, dtype=torch.long)
+
+        return self._finish(
+            batch,
+            batch_indices,
+            np.searchsorted(sampled, slots * n + b_src),
+            np.searchsorted(sampled, slots * n + b_dst),
+        )
+
+    def _build_shared(self, batch_indices: np.ndarray) -> Data:
+        """One induced subgraph shared by all targets in the batch (legacy behaviour)."""
+        b_src = self._target_src[batch_indices]
+        b_dst = self._target_dst[batch_indices]
+        b_times = self._times[batch_indices]
+
+        sampled_nodes = set(b_src.tolist()) | set(b_dst.tolist())
+        sampled_eids: list[np.ndarray] = []
+
+        frontier_nodes: list[int] = list(b_src) + list(b_dst)
+        frontier_times: list[int] = list(b_times) + list(b_times)
+        node_cutoffs: dict[int, int] = {}
+
+        for u_id, t_cut in zip(b_src, b_times, strict=False):
+            u_int = int(u_id)
+            t_int = int(t_cut)
+            if u_int not in node_cutoffs or t_int < node_cutoffs[u_int]:
+                node_cutoffs[u_int] = t_int
+        for v_id, t_cut in zip(b_dst, b_times, strict=False):
+            v_int = int(v_id)
+            t_int = int(t_cut)
+            if v_int not in node_cutoffs or t_int < node_cutoffs[v_int]:
+                node_cutoffs[v_int] = t_int
+
+        for hop_k in range(len(self.num_neighbors)):
+            k_limit = self.num_neighbors[hop_k]
+            if not frontier_nodes:
+                continue
+
+            s_dst, s_eids, s_cuts = self.adj.sample_causal_neighbors(
+                src_nodes=frontier_nodes,
+                time_cutoffs=frontier_times,
+                max_neighbors=k_limit,
+                rng=self.rng,
+            )
+
+            next_fn: list[int] = []
+            next_ft: list[int] = []
+
+            if len(s_eids) > 0:
+                sampled_eids.append(s_eids)
+                for d_node, d_cut in zip(s_dst, s_cuts, strict=False):
+                    d_int = int(d_node)
+                    d_c_int = int(d_cut)
+                    if d_int not in node_cutoffs or d_c_int < node_cutoffs[d_int]:
+                        node_cutoffs[d_int] = d_c_int
+                    if d_int not in sampled_nodes:
+                        sampled_nodes.add(d_int)
+                        next_fn.append(d_int)
+                        next_ft.append(d_c_int)
+
+            frontier_nodes = next_fn
+            frontier_times = next_ft
+
+        nodes_sorted = np.array(sorted(sampled_nodes), dtype=np.int64)
+        global_to_local = {gid: lid for lid, gid in enumerate(nodes_sorted)}
+
+        batch = Data()
+        batch.num_nodes = len(nodes_sorted)
+        batch.n_id = torch.from_numpy(nodes_sorted)
+
+        if self.compute_causal_node_features:
+            def_cut = int(b_times.min()) if len(b_times) > 0 else 0
+            cuts_arr = np.array(
+                [node_cutoffs.get(int(gid), def_cut) for gid in nodes_sorted],
+                dtype=np.int64,
+            )
+            batch.x = torch.from_numpy(self._node_features(nodes_sorted, cuts_arr))
+        else:
+            batch.x = self.data.x[nodes_sorted]
+
+        if sampled_eids:
+            all_eids = np.unique(np.concatenate(sampled_eids))
+            orig_sub_src = self.data.edge_index[0, all_eids].cpu().numpy()
+            orig_sub_dst = self.data.edge_index[1, all_eids].cpu().numpy()
+
+            loc_src = np.array([global_to_local[u] for u in orig_sub_src], dtype=np.int64)
+            loc_dst = np.array([global_to_local[v] for v in orig_sub_dst], dtype=np.int64)
+            batch.edge_index = torch.stack(
+                [torch.from_numpy(loc_src), torch.from_numpy(loc_dst)], dim=0
+            )
+        else:
+            batch.edge_index = torch.empty((2, 0), dtype=torch.long)
+
+        return self._finish(
+            batch,
+            batch_indices,
+            np.array([global_to_local[u] for u in b_src], dtype=np.int64),
+            np.array([global_to_local[v] for v in b_dst], dtype=np.int64),
+        )

@@ -1,0 +1,55 @@
+# ── Validation PR-AUC on identical rows (scripts/validation_comparison.py) ─────
+# Scores VALIDATION only (test is untouched). Logs val_pr_auc_rescored* via the MLflow API to
+# runs that exist locally; models without a local run are reported only.
+
+eval_config: configs/evaluate.yaml      # tracking URI, baseline config (split ratios, cost)
+results_out: docs/verification/validation_comparison.json
+
+models:
+  - key: xgb_tab
+    name: XGBoost (Tabular Baseline)
+    run_id: efa4ea293a6b4226b26eac7e62d972b6
+    kind: xgb_tabular
+    checkpoint: models/xgboost_baseline.json
+  - key: mlp
+    name: Plain MLP (Edge Features Only)
+    run_id: 6c0a0d5625de4e81a4697ba0e73f6897
+    kind: not_available             # no saved model; recomputing needs retraining
+  - key: xgb_lf
+    name: XGBoost + Label-Free Graph Features
+    run_id: 9834e7c546ad4da3b49c2cb12715300f
+    kind: xgb_label_free
+    checkpoint: models/xgboost_label_free.json
+  - key: xgb_oracle
+    name: XGBoost + Hand-Made Graph Features (Oracle, uses past labels)
+    run_id: c6ab22d40a7e452d990c8a75f57cb6aa
+    kind: not_available             # no saved model; recomputing needs retraining
+  - key: gat_bind_shared
+    name: HeteroGAT binding, trained on shared batches, scored shared (as at training)
+    run_id: f1303c5a5e2549b38704bb8bbbcdd028
+    kind: hetero_gat
+    checkpoint: models/best_hetero_gat_pna_causal.pt
+    gnn_config: configs/hetero_gat.yaml
+    conv_type: pna
+    use_device_ip: true
+    isolate_targets: false
+    metric_prefix: val_pr_auc_rescored_shared
+  - key: gat_bind_isolated
+    name: HeteroGAT binding, trained on shared batches, scored isolated
+    run_id: f1303c5a5e2549b38704bb8bbbcdd028
+    kind: hetero_gat
+    checkpoint: models/best_hetero_gat_pna_causal.pt
+    gnn_config: configs/hetero_gat.yaml
+    conv_type: pna
+    use_device_ip: true
+    isolate_targets: true
+    metric_prefix: val_pr_auc_rescored
+  - key: gat_colab
+    name: HeteroGAT binding, trained on isolated batches (Colab), scored isolated
+    run_id: null                    # Colab MLflow run is not in the local store
+    kind: hetero_gat
+    checkpoint: models/best_hetero_gat_pna_isolated_colab.pt
+    gnn_config: configs/hetero_gat_colab.yaml
+    conv_type: pna
+    use_device_ip: true
+    isolate_targets: true

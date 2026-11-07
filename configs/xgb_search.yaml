@@ -1,0 +1,19 @@
+# ── Label-free XGBoost random search (scripts/xgb_search.py), docs/protocol.md §6 ──
+baseline_config: configs/baseline.yaml   # data path and 60/20/20 split
+seed: 42                                 # sampling seed
+n_configs: 20
+space:                                   # full grid is enumerated in this key order
+  max_depth: [4, 6, 8]
+  learning_rate: [0.03, 0.05, 0.1]
+  n_estimators: [300, 600, 1000]
+  min_child_weight: [1, 5, 10]
+  subsample: [0.7, 0.8, 1.0]
+  colsample_bytree: [0.6, 0.8, 1.0]
+fixed:
+  early_stopping_rounds: 30              # on validation PR-AUC, as in the original label-free run
+  random_state: 42
+  tree_method: hist
+results_out: docs/verification/xgb_search.json
+final:
+  seeds: [42, 43, 44]
+  model_dir: models                      # writes xgboost_label_free_final_seed<N>.json

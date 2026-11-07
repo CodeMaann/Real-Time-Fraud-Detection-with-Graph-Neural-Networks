@@ -48,9 +48,12 @@ from fraudgnn.training.train_gnn import evaluate_model
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from scripts.graph_signal_check import compute_causal_graph_features
 from scripts.train_label_free_xgb import compute_label_free_graph_features
+from scripts.train_mlp_baseline import PlainMLP
 
 TARGET_REL = ("user", "transacts_at", "merchant")
+EDGE_FEATURE_DIM = 27  # per-transaction edge features the MLP was trained on
 RESCORE_PREFIX = "rescored_"
 SHARED_PREFIX = "rescored_shared_"  # legacy shared-subgraph GNN batches (leaky)
 
@@ -204,9 +207,15 @@ def score_hetero_gat(
 
 
 def score_graphsage(
-    entry: dict[str, Any], gnn_cfg: GNNConfig, graphs: dict[str, HeteroData]
+    entry: dict[str, Any],
+    gnn_cfg: GNNConfig,
+    graphs: dict[str, HeteroData],
+    isolate_targets: bool = True,
 ) -> Scored:
-    """Score a homogeneous GraphSAGE checkpoint with its training loader settings."""
+    """Score a homogeneous GraphSAGE checkpoint with its training loader settings.
+
+    ``isolate_targets=False`` reproduces the legacy shared-subgraph batches.
+    """
     num_neighbors = gnn_cfg.training.num_neighbors[: gnn_cfg.model.num_layers]
     model: GraphSAGEEdgeClassifier | None = None
     probas: dict[str, np.ndarray] = {}
@@ -238,6 +247,7 @@ def score_graphsage(
             num_neighbors=num_neighbors,
             shuffle=False,
             seed=gnn_cfg.training.seed,
+            isolate_targets=isolate_targets,
         )
         _, proba, elapsed = evaluate_model(model, loader, is_hetero=False)
         probas[split_name] = proba
@@ -245,9 +255,25 @@ def score_graphsage(
     tags = {
         "rescore_num_neighbors": json.dumps(num_neighbors),
         "rescore_batch_size": str(gnn_cfg.training.batch_size),
-        "rescore_isolate_targets": "false (not supported by the homogeneous loader)",
+        "rescore_isolate_targets": str(isolate_targets).lower(),
     }
     return Scored(probas["val"], probas["test"], latency, tags)
+
+
+def score_mlp(ckpt: Path, graphs: dict[str, HeteroData]) -> Scored:
+    """Score the edge-feature MLP on the graph's 27 (train-scaled) target edge attributes."""
+    model = PlainMLP(in_dim=EDGE_FEATURE_DIM)
+    model.load_state_dict(torch.load(ckpt, map_location="cpu", weights_only=True))
+    model.eval()
+    probas: dict[str, np.ndarray] = {}
+    latency = 0.0
+    with torch.no_grad():
+        for split_name, mask_name in (("val", "val_mask"), ("test", "test_mask")):
+            x = split_targets(graphs[split_name], mask_name)["edge_attr"].float()
+            t0 = time.perf_counter()
+            probas[split_name] = torch.sigmoid(model(x)).numpy()
+            latency = (time.perf_counter() - t0) / max(1, len(x)) * 1000.0
+    return Scored(probas["val"], probas["test"], latency, {})
 
 
 def check_run_params(client: MlflowClient, entry: dict[str, Any], gnn_cfg: GNNConfig) -> None:
@@ -329,7 +355,22 @@ def main(argv: list[str] | None = None) -> int:
 
         print(f"\n[{key}] Re-scoring {entry['name']} ({entry['checkpoint']})...")
         ckpt = Path(entry["checkpoint"])
-        if kind in ("xgb_tabular", "xgb_label_free"):
+        if kind == "xgb_oracle":
+            # Same features as scripts/graph_signal_check.py (uses past fraud labels).
+            feats = compute_tabular_features(df_raw, smoothing_alpha=base_cfg.smoothing_alpha)
+            graph_feats = compute_causal_graph_features(df_raw)
+            feats = pd.concat([feats, graph_feats], axis=1)
+            cols = get_feature_column_names() + list(graph_feats.columns)
+            scored = score_xgb(
+                ckpt, feats.loc[split.val_mask, cols], feats.loc[split.test_mask, cols]
+            )
+            variants = [(RESCORE_PREFIX, key, scored)]
+        elif kind == "mlp":
+            if not graphs:
+                for name in ("val", "test"):
+                    graphs[name] = torch.load(processed / f"{name}_graph.pt", weights_only=False)
+            variants = [(RESCORE_PREFIX, key, score_mlp(ckpt, graphs))]
+        elif kind in ("xgb_tabular", "xgb_label_free"):
             # The tabular baseline was trained with include_label_features=True (27 columns).
             label_free = kind == "xgb_label_free"
             feats = compute_tabular_features(df_raw, include_label_features=not label_free)
@@ -357,7 +398,14 @@ def main(argv: list[str] | None = None) -> int:
                     ),
                 ]
             else:
-                variants = [(RESCORE_PREFIX, key, score_graphsage(entry, gnn_cfg, graphs))]
+                variants = [
+                    (RESCORE_PREFIX, key, score_graphsage(entry, gnn_cfg, graphs, True)),
+                    (
+                        SHARED_PREFIX,
+                        f"{key}_shared",
+                        score_graphsage(entry, gnn_cfg, graphs, False),
+                    ),
+                ]
         if kind in ("xgb_tabular", "xgb_label_free"):
             variants = [(RESCORE_PREFIX, key, scored)]
 

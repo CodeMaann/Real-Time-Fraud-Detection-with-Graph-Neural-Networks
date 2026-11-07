@@ -1,0 +1,20 @@
+# ── Leakage battery on REAL data (scripts/leakage_battery.py) ─────────
+eval_config: configs/evaluate.yaml          # data paths and split ratios
+model:                                      # checkpoint under audit
+  checkpoint: models/best_hetero_gat_pna_isolated_colab.pt
+  gnn_config: configs/hetero_gat_colab.yaml
+  conv_type: pna
+  use_device_ip: true
+seed: 42
+brute_force:
+  targets: 200                              # random validation targets
+  tolerance: 1.0e-5                         # max |score difference| to pass
+injection:
+  block_size: 2048                          # first N validation targets in time order
+  batch_sizes: [1, 2, 64, 2048]
+  amount_scale: 1000.0                      # injected transactions: target amount x this
+results_out: docs/verification/leakage_battery.json
+per_checkpoint_out: docs/verification/battery_{key}_{split}.json   # --split mode (freeze needs these)
+worlds:
+  original: {raw: data/raw/transactions.parquet, processed: data/processed}
+  holdout: {raw: data/holdout/raw/transactions.parquet, processed: data/holdout/processed}

@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import sys
 import time
+from typing import Any
 
 os.environ["MLFLOW_ALLOW_FILE_STORE"] = "true"
 os.environ["MLFLOW_DISABLE_AGENT_HINT"] = "1"
@@ -23,7 +24,7 @@ import numpy as np
 import pandas as pd
 import xgboost as xgb
 
-from fraudgnn.config import load_baseline_config
+from fraudgnn.config import BaselineConfig, load_baseline_config
 from fraudgnn.data.features import compute_tabular_features, get_feature_column_names
 from fraudgnn.training.evaluate import compute_metrics
 
@@ -153,9 +154,15 @@ def compute_causal_graph_features(df: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def main() -> int:
-    """Run graph-signal check and print performance comparison."""
-    config = load_baseline_config("configs/baseline.yaml")
+def fit_oracle(config: BaselineConfig) -> dict[str, Any]:
+    """Fit the label-using oracle XGBoost and score validation and test.
+
+    Args:
+        config: Baseline config (data path, split ratios, model settings, cost).
+
+    Returns:
+        Model, validation/test frames, probabilities and metrics.
+    """
 
     print("\n" + "=" * 70)
     print("  GRAPH SIGNAL SANITY CHECK: TABULAR + CAUSAL GRAPH FEATURES")
@@ -275,6 +282,29 @@ def main() -> int:
         fraud_types=test_df["fraud_type"].to_numpy(),
         compute_ci=True,
     )
+
+    return {
+        "model": model,
+        "spw": spw,
+        "graph_cols": graph_cols,
+        "val_df": val_df,
+        "test_df": test_df,
+        "y_val_prob": y_val_prob,
+        "y_test_prob": y_test_prob,
+        "val_metrics": val_metrics,
+        "test_metrics": test_metrics,
+        "latency_ms": latency_ms,
+    }
+
+
+def main() -> int:
+    """Run graph-signal check and print performance comparison."""
+    config = load_baseline_config("configs/baseline.yaml")
+    res = fit_oracle(config)
+    model, spw, graph_cols = res["model"], res["spw"], res["graph_cols"]
+    val_metrics, test_metrics = res["val_metrics"], res["test_metrics"]
+    val_thresh = val_metrics.best_threshold
+    latency_ms = res["latency_ms"]
 
     # Log to MLflow
     mlflow.set_tracking_uri("sqlite:///mlflow.db")

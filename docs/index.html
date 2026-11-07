@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fraud Detection with Graph Neural Networks</title>
+<style>
+  :root { --bg: #ffffff; --fg: #1f2328; --muted: #59636e; --line: #d1d9e0; --link: #0969da; --card: #f6f8fa; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0d1117; --fg: #e6edf3; --muted: #9198a1; --line: #3d444d; --link: #4493f8; --card: #151b23; }
+  }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 32px 16px 48px; }
+  h1 { font-size: 1.8rem; margin: 0 0 4px; }
+  h2 { font-size: 1.2rem; margin: 32px 0 8px; padding-bottom: 4px; border-bottom: 1px solid var(--line); }
+  h3 { font-size: 1rem; margin: 16px 0 4px; }
+  p.lead { color: var(--muted); margin: 0 0 16px; }
+  a { color: var(--link); }
+  ul { margin: 4px 0; padding-left: 20px; }
+  .tag { font: 12px ui-monospace, SFMono-Regular, Consolas, monospace; color: var(--muted); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 12px 16px; }
+  img { max-width: 100%; height: auto; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+  nav a { margin-right: 16px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Real-Time Fraud Detection with Graph Neural Networks</h1>
+  <p class="lead">Heterogeneous transaction graphs (users, cards, merchants, devices, IPs), leak-free
+    causal evaluation, and per-model explanations of flagged transactions.</p>
+  <nav>
+    <a href="https://github.com/CodeMaann/Real-Time-Fraud-Detection-with-Graph-Neural-Networks">Repository</a>
+    <a href="https://github.com/CodeMaann/Real-Time-Fraud-Detection-with-Graph-Neural-Networks/blob/main/docs/benchmarks.md">Benchmarks</a>
+    <a href="https://github.com/CodeMaann/Real-Time-Fraud-Detection-with-Graph-Neural-Networks/blob/main/docs/design-decisions.md">Design decisions</a>
+  </nav>
+
+  <h2>Results</h2>
+  <!-- RESULTS-SUMMARY: fill in from docs/benchmarks.md once the leak-free test re-score is final. -->
+  <p class="card">The leak-free test results are being finalised. The full table, with 95% bootstrap
+    confidence intervals and the leakage checks, is in
+    <a href="https://github.com/CodeMaann/Real-Time-Fraud-Detection-with-Graph-Neural-Networks/blob/main/docs/benchmarks.md">benchmarks.md</a>.</p>
+
+  <h2>Example: a flagged fraud ring</h2>
+  <img src="examples/ring_example.png" alt="Causal 2-hop neighborhood of a flagged fraud-ring transaction: the target user, merchant, shared device and IP, and the other accounts linked through them">
+  <p class="tag">The fraud type is a post-hoc audit label, never a model input.</p>
+
+  <h2>Explanation pages</h2>
+  <p>Each page shows one transaction's causal 2-hop neighborhood and the reason codes of a single
+    model. <span class="tag">xgb_lf</span> = XGBoost with label-free graph features (SHAP);
+    <span class="tag">gat_bind</span> = HeteroGAT with device/IP binding, the model trained on shared
+    batches (perturbation).</p>
+
+  <h3>Fraud ring</h3>
+  <ul>
+    <li><a href="examples/tx_tx_00399620_xgb_lf_fraud_ring.html">tx_00399620</a> <span class="tag">xgb_lf</span></li>
+    <li><a href="examples/tx_tx_00399620_gat_bind_fraud_ring.html">tx_00399620</a> <span class="tag">gat_bind</span></li>
+  </ul>
+  <h3>Account takeover</h3>
+  <ul>
+    <li><a href="examples/tx_tx_00399482_xgb_lf_account_takeover.html">tx_00399482</a> <span class="tag">xgb_lf</span></li>
+    <li><a href="examples/tx_tx_00399482_gat_bind_account_takeover.html">tx_00399482</a> <span class="tag">gat_bind</span></li>
+  </ul>
+  <h3>Merchant collusion</h3>
+  <ul>
+    <li><a href="examples/tx_tx_00399840_xgb_lf_merchant_collusion.html">tx_00399840</a> <span class="tag">xgb_lf</span></li>
+    <li><a href="examples/tx_tx_00402530_gat_bind_merchant_collusion.html">tx_00402530</a> <span class="tag">gat_bind</span></li>
+  </ul>
+  <h3>Card testing</h3>
+  <ul>
+    <li><a href="examples/tx_tx_00401496_xgb_lf_card_testing.html">tx_00401496</a> <span class="tag">xgb_lf</span></li>
+    <li><a href="examples/tx_tx_00403006_gat_bind_card_testing.html">tx_00403006</a> <span class="tag">gat_bind</span></li>
+  </ul>
+  <h3>Mule</h3>
+  <ul>
+    <li><a href="examples/tx_tx_00399518_xgb_lf_mule.html">tx_00399518</a> <span class="tag">xgb_lf</span></li>
+    <li><a href="examples/tx_tx_00399518_gat_bind_mule.html">tx_00399518</a> <span class="tag">gat_bind</span></li>
+  </ul>
+  <p class="tag">Explanation pages load the vis-network library from a CDN, so they need an internet connection.
+    Licensed under PolyForm Noncommercial 1.0.0.</p>
+</main>
+</body>
+</html>

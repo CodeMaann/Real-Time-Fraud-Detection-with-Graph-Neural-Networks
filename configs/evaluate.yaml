@@ -18,7 +18,8 @@ models:
   - key: mlp
     name: Plain MLP (Edge Features Only)
     run_id: 6c0a0d5625de4e81a4697ba0e73f6897
-    kind: logged_only          # no checkpoint was saved for this run
+    kind: mlp
+    checkpoint: models/mlp_edge_features_retrained.pt   # retrained; test PR-AUC reproduced exactly
 
   - key: xgb_lf
     name: XGBoost + Label-Free Graph Features
@@ -29,7 +30,8 @@ models:
   - key: xgb_oracle
     name: XGBoost + Hand-Made Graph Features (Oracle, uses past labels)
     run_id: c6ab22d40a7e452d990c8a75f57cb6aa
-    kind: logged_only          # no checkpoint was saved for this run
+    kind: xgb_oracle
+    checkpoint: models/xgboost_oracle_retrained.json    # retrained; test PR-AUC reproduced exactly
 
   - key: sage_causal
     name: GraphSAGE (Homogeneous, Causal)
@@ -37,6 +39,7 @@ models:
     kind: graphsage
     checkpoint: models/best_graphsage_causal.pt
     gnn_config: configs/sage.yaml
+    training_batches: shared       # trained with the leaky shared-subgraph loader
 
   - key: gat_nobind
     name: HeteroGAT (PNA, Causal, Without Device/IP Binding)
@@ -46,6 +49,7 @@ models:
     gnn_config: configs/hetero_sum.yaml
     conv_type: pna
     use_device_ip: false
+    training_batches: shared
     training_log: train_pna.log   # console log of this run (training-time test metrics)
 
   - key: gat_bind
@@ -56,6 +60,17 @@ models:
     gnn_config: configs/hetero_gat.yaml
     conv_type: pna
     use_device_ip: true
+    training_batches: shared
+
+  - key: gat_isolated
+    name: HeteroGAT (PNA, Causal, With Device/IP Binding, isolated-batch training)
+    run_id: 3d5fa8f3a1764366866aedd1d9cd710d    # registered from the Colab state file
+    kind: hetero_gat
+    checkpoint: models/best_hetero_gat_pna_isolated_colab.pt   # epoch 18 of max 30
+    gnn_config: configs/hetero_gat_colab.yaml
+    conv_type: pna
+    use_device_ip: true
+    training_batches: isolated
 
 # Runs whose training-time test metrics were overwritten in place on 2026-10-19 by the
 # removed raw-SQL "Synchronize MLflow Database" block of commit 76981a5. Their test_* metrics
@@ -73,4 +88,8 @@ report:
   bootstrap_iterations: 500    # paired bootstrap, GNN with binding vs label-free XGBoost
   bootstrap_seed: 42
   bootstrap_alpha: 0.05
-  batch_leak_results: data/processed/batch_leak.json   # from scripts/measure_batch_leak.py
+  batch_leak_results: docs/verification/batch_leak.json   # from scripts/measure_batch_leak.py
+  battery_results: docs/verification/leakage_battery.json  # from scripts/leakage_battery.py
+  paired_bootstrap_pairs:      # [a, b]: PR-AUC(a) - PR-AUC(b) on the same test resamples
+    - [gat_isolated, xgb_lf]
+    - [gat_isolated, xgb_oracle]

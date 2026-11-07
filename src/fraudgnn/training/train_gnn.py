@@ -238,6 +238,11 @@ def evaluate_model(
 CHECKPOINT_FORMAT_VERSION = 1
 
 
+def device_name(device: torch.device) -> str:
+    """Hardware name for timing records: the CUDA device name, or "cpu"."""
+    return torch.cuda.get_device_name(device) if device.type == "cuda" else "cpu"
+
+
 def resolve_device(name: str) -> torch.device:
     """Map a ``--device`` choice (cpu, cuda, auto) to a torch device.
 
@@ -453,6 +458,26 @@ def prepare_training(
         and test_graph[target_rel].ip_index is not None
         else test_graph["user", "uses_ip", "ip"].edge_index[1][test_mask]
     )
+
+    train_fraction = config.training.train_target_fraction
+    if train_fraction is not None and 0.0 < train_fraction < 1.0:
+        # Fixed random subset of training targets (same for every run with the same seed),
+        # sorted so time order is kept; validation and test targets are untouched.
+        n_all = tr_edge_index.size(1)
+        keep = torch.from_numpy(
+            np.sort(
+                np.random.default_rng(config.training.train_subset_seed).choice(
+                    n_all, size=max(1, int(n_all * train_fraction)), replace=False
+                )
+            )
+        )
+        tr_edge_index = tr_edge_index[:, keep]
+        tr_edge_label = tr_edge_label[keep]
+        tr_edge_attr = tr_edge_attr[keep]
+        tr_edge_time = tr_edge_time[keep]
+        tr_device_index = tr_device_index[keep]
+        tr_ip_index = tr_ip_index[keep]
+        print(f"Training-target subset: {len(keep):,} of {n_all:,} ({train_fraction:.0%})")
 
     if subset_fraction is not None and 0.0 < subset_fraction < 1.0:
         n_tr_sub = max(100, int(tr_edge_index.size(1) * subset_fraction))
@@ -738,8 +763,8 @@ def prepare_training(
         "model_type": config.model.model_type,
         "conv_type": conv_type,
         "causal": causal,
-        # Hetero causal loaders isolate each target subgraph (no batch-sharing leak).
-        "isolate_targets": causal and is_hetero,
+        # Causal loaders isolate each target subgraph (no batch-sharing leak).
+        "isolate_targets": causal,
         "hidden_dim": config.model.hidden_dim,
         "num_layers": num_hops,
         "use_edge_attr": use_edge_attr,
@@ -753,6 +778,11 @@ def prepare_training(
         "seed": config.training.seed,
         "pos_weight": computed_pos_weight,
         "subset_fraction": subset_fraction,
+        "train_target_fraction": config.training.train_target_fraction,
+        "train_subset_seed": config.training.train_subset_seed,
+        "dropout": config.model.dropout,
+        "weight_decay": config.training.weight_decay,
+        "num_neighbors": str(num_neighbors),
     }
 
     return TrainingSetup(
@@ -932,6 +962,7 @@ def train_and_evaluate_gnn(
     device: torch.device | None = None,
     resume: bool = False,
     stop_after_epochs: int | None = None,
+    evaluate_test: bool = True,
 ) -> dict[str, Any]:
     """Train GNN model, perform early stopping on validation PR-AUC, and evaluate on test set.
 
@@ -954,6 +985,8 @@ def train_and_evaluate_gnn(
         resume: Continue from ``config.training.checkpoint_path`` if it exists.
         stop_after_epochs: Stop (as if interrupted) after this epoch number, after saving the
             resume state. Used to split long runs into sessions and in tests.
+        evaluate_test: Score the test split after training. False for hyperparameter search
+            (selection must use validation only).
 
     Returns:
         Dictionary of final test and validation metrics, or ``status="interrupted"``.
@@ -1028,7 +1061,12 @@ def train_and_evaluate_gnn(
             mlflow.set_tag("resumed_from_run", previous_run_id)
             for h in history:
                 mlflow.log_metrics(
-                    {k: float(v) for k, v in h.items() if k != "epoch"}, step=int(h["epoch"])
+                    {
+                        k: float(v)
+                        for k, v in h.items()
+                        if k != "epoch" and isinstance(v, int | float)
+                    },
+                    step=int(h["epoch"]),
                 )
 
     early_stopped = patience_counter >= patience
@@ -1084,7 +1122,8 @@ def train_and_evaluate_gnn(
             "epoch_seconds": epoch_time,
         }
         mlflow.log_metrics(epoch_metrics, step=epoch)
-        history.append({"epoch": epoch, **epoch_metrics})
+        # Device of this epoch, so measured epoch times are only compared on equal hardware.
+        history.append({"epoch": epoch, **epoch_metrics, "device_name": device_name(device)})
 
         # Early stopping check on validation PR-AUC
         if val_metrics.pr_auc > best_val_pr_auc:
@@ -1127,6 +1166,23 @@ def train_and_evaluate_gnn(
 
     if best_state is None:
         raise RuntimeError("No epoch finished; nothing to evaluate.")
+
+    if not evaluate_test:
+        best = max(history, key=lambda h: h["val_pr_auc"])
+        mlflow.log_metrics(
+            {"best_val_pr_auc": best_val_pr_auc, "epochs_trained": float(actual_epochs_run)}
+        )
+        mlflow.log_artifact(str(best_checkpoint_path), artifact_path="model")
+        mlflow.end_run()
+        return {
+            "status": "finished",
+            "best_val_pr_auc": best_val_pr_auc,
+            "best_epoch": int(best["epoch"]),
+            "epochs_run": actual_epochs_run,
+            "history": history,
+            "mlflow_run_id": run_id,
+            "best_checkpoint": str(best_checkpoint_path),
+        }
 
     # Final Evaluation: Load best weights
     print(f"\nLoading best weights (saved at {best_checkpoint_path})...")
@@ -1218,6 +1274,18 @@ def train_and_evaluate_gnn(
     }
 
 
+def with_seed(config: GNNConfig, seed: int) -> GNNConfig:
+    """Copy of ``config`` with ``seed`` set and seed-suffixed checkpoint/model file names."""
+    cfg = config.model_copy(deep=True)
+    cfg.training.seed = seed
+    save = Path(cfg.training.model_save_path)
+    cfg.training.model_save_path = save.with_name(f"{save.stem}_seed{seed}{save.suffix}")
+    if cfg.training.checkpoint_path is not None:
+        ckpt = Path(cfg.training.checkpoint_path)
+        cfg.training.checkpoint_path = ckpt.with_name(f"{ckpt.stem}_seed{seed}{ckpt.suffix}")
+    return cfg
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI Entry point for GNN training."""
     parser = argparse.ArgumentParser(description="Train Graph Neural Network for fraud detection.")
@@ -1298,9 +1366,18 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Timing mode: time N train and N val batches, print seconds per epoch, no training run",
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Override training.seed; checkpoint and model file names get a _seed<N> suffix",
+    )
+    parser.add_argument("--no-test", action="store_true", help="Do not score the test split")
     args = parser.parse_args(argv)
 
     config = load_gnn_config(args.config)
+    if args.seed is not None:
+        config = with_seed(config, args.seed)
     device = resolve_device(args.device)
     overrides: dict[str, Any] = {
         "subset_fraction": args.subset_fraction,
@@ -1323,6 +1400,7 @@ def main(argv: list[str] | None = None) -> int:
         device=device,
         resume=args.resume,
         stop_after_epochs=args.stop_after_epochs,
+        evaluate_test=not args.no_test,
         **overrides,
     )
     return 0

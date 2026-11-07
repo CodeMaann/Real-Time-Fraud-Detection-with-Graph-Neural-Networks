@@ -1,0 +1,5 @@
+# ── Colab checkpoint intake (scripts/intake_colab_checkpoint.py) ──────
+gnn_config: configs/hetero_gat_colab.yaml         # architecture the weights were trained with
+graph_for_types: data/processed/val_graph.pt      # node/edge types for building the model
+output: models/best_hetero_gat_pna_isolated_colab.pt   # NEW file; the script refuses to overwrite
+report_out: docs/verification/colab_checkpoint_intake.json

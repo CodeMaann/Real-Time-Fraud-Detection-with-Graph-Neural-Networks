@@ -1,0 +1,7 @@
+# ── Register the Colab-trained HeteroGAT locally (scripts/register_colab_run.py) ──
+tracking_uri: sqlite:///mlflow.db
+experiment: fraud-gnn-hetero-gat
+run_name: hetero_gat_pna_isolated_colab
+trained_on: Google Colab T4 (configs/hetero_gat_colab.yaml)
+best_model_file: models/best_hetero_gat_pna_isolated_colab.pt   # written by intake_colab_checkpoint.py
+stopped_note: stopped by hand after epoch 18 (its best epoch); max 30 epochs, patience 5, so 12 epochs unused

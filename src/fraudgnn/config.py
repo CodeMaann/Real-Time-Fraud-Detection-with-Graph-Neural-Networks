@@ -206,6 +206,13 @@ class TrainingConfig(BaseModel):
         description="Targets per forward/backward pass; batch_size must be a multiple. "
         "Gradients are accumulated to one optimizer step per batch_size targets.",
     )
+    train_target_fraction: float | None = Field(
+        default=None,
+        gt=0.0,
+        le=1.0,
+        description="Train on a fixed random fraction of training targets (search budget)",
+    )
+    train_subset_seed: int = Field(default=42, description="Seed of the training-target subset")
     learning_rate: float = Field(default=1e-3, gt=0.0)
     weight_decay: float = Field(default=1e-5, ge=0.0)
     patience: int = Field(default=5, ge=1, description="Early-stopping patience on val PR-AUC")

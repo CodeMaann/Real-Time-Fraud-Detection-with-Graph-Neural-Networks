@@ -1,0 +1,17 @@
+# ── Reproduce baselines that saved no model (scripts/reproduce_baselines.py) ──
+# Retrains with the original code, config and seed (no new MLflow run). A retrained model is
+# used only if its TEST PR-AUC is within test_pr_auc_abs_tolerance of the original run's
+# logged value (signed difference printed); then its
+# VALIDATION PR-AUC is logged to the original run via the MLflow API.
+
+eval_config: configs/evaluate.yaml
+test_pr_auc_abs_tolerance: 1.0e-6   # reproduction gate: |retrained - original| test PR-AUC
+results_out: docs/verification/baseline_reproduction.json
+oracle:
+  run_id: c6ab22d40a7e452d990c8a75f57cb6aa
+  baseline_config: configs/baseline.yaml      # same config graph_signal_check.py uses
+  save_model: models/xgboost_oracle_retrained.json
+mlp:
+  run_id: 6c0a0d5625de4e81a4697ba0e73f6897
+  seed: 42                                    # train_and_eval_mlp defaults (original run)
+  save_model: models/mlp_edge_features_retrained.pt

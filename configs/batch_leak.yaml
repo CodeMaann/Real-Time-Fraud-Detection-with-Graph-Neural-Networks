@@ -13,4 +13,4 @@ target_fpr: 0.01                        # threshold chosen on validation subset 
 bootstrap_iterations: 500
 bootstrap_alpha: 0.05
 isolated_chunk: 2048                    # targets per forward pass in isolated mode
-results_out: data/processed/batch_leak.json
+results_out: docs/verification/batch_leak.json

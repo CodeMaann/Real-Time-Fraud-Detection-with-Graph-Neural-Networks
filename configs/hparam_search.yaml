@@ -1,0 +1,56 @@
+# ── HeteroGAT random search (scripts/hparam_search.py), see docs/protocol.md §4 ──
+base_config: configs/hetero_gat_colab.yaml   # fixed settings: PNA, binding, 2 layers, 4 heads, batch 2048
+seed: 42                                     # sampling seed
+n_configs: 8
+space:                                       # full grid is enumerated in this key order
+  learning_rate: [0.0003, 0.001, 0.002]
+  hidden_dim: [64, 128]
+  dropout: [0.1, 0.2, 0.3]
+  weight_decay: [0.00001, 0.0001]
+  num_neighbors: [[10, 10], [15, 10]]
+  loss_type: [weighted_bce, focal]
+anchor:                                      # known-good settings, run as configuration 8
+  learning_rate: 0.001
+  hidden_dim: 64
+  dropout: 0.2
+  weight_decay: 0.00001
+  num_neighbors: [10, 10]
+  loss_type: weighted_bce
+budget:
+  train_target_fraction: 0.25                # fixed random subset of training targets
+  train_subset_seed: 42
+  epochs: 6                                  # patience = epochs: no early stopping
+  model_seed: 42
+mlflow_experiment: fraud-gnn-hparam-search
+selection:                                   # pre-registered rule, protocol section 4
+  margin: 0.01                               # configs within this of the best val PR-AUC are tied;
+                                             # the fastest measured mean epoch among them wins
+
+paths:                                       # --paths colab (default) or --paths local
+  colab:
+    data_dir: /content/data/processed
+    raw_data_path: /content/data/raw/transactions.parquet
+    checkpoint_dir: /content/drive/MyDrive/fraudgnn/checkpoints/search
+    best_model_dir: /content/run/search_models
+    tracking_uri: sqlite:////content/run/mlflow.db
+    results_out: /content/drive/MyDrive/fraudgnn/hparam_search.json
+  local:
+    data_dir: data/processed
+    raw_data_path: data/raw/transactions.parquet
+    checkpoint_dir: data/hparam_search/checkpoints
+    best_model_dir: data/hparam_search/models
+    tracking_uri: sqlite:///mlflow.db
+    results_out: docs/verification/hparam_search.json
+
+estimate:
+  colab_minutes_per_full_epoch: 9.3          # user-reported Colab T4 epoch: hidden 64, [10,10], full data
+  reference_combo: hidden64_nn10x10          # the combination that 9.3 min was measured for
+  timing_file: docs/verification/search_timing_cpu.json  # written by --measure-timing
+
+final:                                       # scripts/write_final_config.py (protocol §5)
+  max_epochs: 30
+  patience: 6
+  seeds: [42, 43, 44]                        # run in this order, each to completion
+  model_save_path: models/best_hetero_gat_final.pt   # stem only; _seed<N> is appended
+  checkpoint_path: /content/drive/MyDrive/fraudgnn/checkpoints/hetero_gat_final_state.pt
+  mlflow_experiment: fraud-gnn-hetero-gat-final
